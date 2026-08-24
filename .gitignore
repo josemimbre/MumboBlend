@@ -25,3 +25,8 @@ BlenderAddOn/exports/*
 BlenderAddOn/.vs/*
 BlenderAddOn/.vscode/*
 BlenderAddOn/REBOOT_BLENDER.bat
+
+# .NET build output / restored NuGet packages
+bin/
+obj/
+packages/
