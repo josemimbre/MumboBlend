@@ -69,7 +69,7 @@ class ModelBIN_ColSeg:
                         enum_x_id = (x_id - self.min_geo_cube_x)
                         cube_id = (enum_x_id + (enum_y_id * self.stride_y) + (enum_z_id * self.stride_z))
 
-                        if (binjo_utils.tri_intersects_cube(tri, self.geo_cube_list[cube_id]) == True):
+                        if (binjo_utils.tri_intersects_cube(tri, self.geo_cube_list[cube_id])):
                             self.geo_cube_list[cube_id].intersecting_tri_list.append(tri)
                             self.tri_cnt += 1
 
@@ -87,7 +87,7 @@ class ModelBIN_ColSeg:
                 listed_tris += 1
 
         if (self.tri_cnt != listed_tris):
-            print(f"Something went wrong within ColSeg() building; listed_tri_cnt != assigned tri_cnt")
+            print("Something went wrong within ColSeg() building; listed_tri_cnt != assigned tri_cnt")
             self.valid = False
             return
         self.valid = True
@@ -168,7 +168,7 @@ class ModelBIN_ColSeg:
 
     # link the VTX objects in the given VTX-list to the TRI objects in our tri-list via their indices
     def link_vertex_objects_for_all_tris(self, vtx_list):
-        if (self.valid == False):
+        if (not self.valid):
             print("Cannot link vertices - No Collision Segment")
             return
         # I'm deliberately NOT using the func within ModelBIN_TriElem to avoid passing the list around so much
@@ -181,8 +181,8 @@ class ModelBIN_ColSeg:
         if ("NOCOLL" in mat_name):
             return None
         # try getting a regex match from the material name (should be an attribute later)
-        match = re.search(rf".*_.*(0x[0-9,A-F]+)", mat_name)
-        if (match == None):
+        match = re.search(r".*_.*(0x[0-9,A-F]+)", mat_name)
+        if (match is None):
             print(f"Couldn't parse coll_type from Material {mat_name}")
             return None
         # group(1) is actually the first group, because group(0) is reserved for the full-match...
@@ -198,7 +198,7 @@ class ModelBIN_ColSeg:
 
 
     def get_colltype_from_mat(mat):
-        if (mat["Collision_Disabled"] == True):
+        if (mat["Collision_Disabled"]):
             return None
             
         coll_type = 0x0000_0000
@@ -208,7 +208,7 @@ class ModelBIN_ColSeg:
             if (key == "SFX Value"):
                 print(mat["Collision_Flags"][key])
                 continue
-            if (mat["Collision_Flags"][key] == True):
+            if (mat["Collision_Flags"][key]):
                 coll_type += Dicts.COLLISION_FLAGS[key]
         # as well as the SFX value
         coll_type += (mat["Collision_SFX"] << 8)
@@ -288,7 +288,7 @@ class ModelBIN_TriElem:
         self.unk_1          = 0x00
         self.collision_type = coll_type
         self.tex_idx        = tex_id
-        self.visible        = (tex_id != None)
+        self.visible        = (tex_id is not None)
         return
 
     # link the VTX objects in the given VTX-list to the TRI objects in our tri-list via their indices

@@ -1,8 +1,6 @@
 
 from . import binjo_utils
 from . binjo_dicts import Dicts
-import os
-import sys
 import bpy
 
 class ModelBIN_TexSeg:

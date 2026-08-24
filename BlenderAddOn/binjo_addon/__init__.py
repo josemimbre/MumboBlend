@@ -4,15 +4,16 @@ import os
 import numpy as np
 from timeit import default_timer as timer
 
+from . import binjo_utils
 from . binjo_model_bin import ModelBIN
 from . binjo_bin_handler import BINjo_ModelBIN_Handler
 from . binjo_dicts import Dicts
 
-from . binjo_model_bin_vertex_seg import ModelBIN_VtxSeg, ModelBIN_VtxElem
+from . binjo_model_bin_vertex_seg import ModelBIN_VtxElem
 from . binjo_model_bin_collision_seg import ModelBIN_ColSeg, ModelBIN_TriElem
-from . binjo_model_bin_texture_seg import ModelBIN_TexSeg, ModelBIN_TexElem
-from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg, DisplayList_Command
-from . binjo_model_bin_geolayout_seg import ModelBIN_GeoSeg, ModelBIN_GeoCommandChain
+from . binjo_model_bin_texture_seg import ModelBIN_TexElem
+from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg
+
 
 import bpy
 from bpy_extras.io_utils import ImportHelper
@@ -49,7 +50,7 @@ def highlight_invis_changed(self, context):
     for face in target_object.data.polygons:
         if ("INVIS" in target_object.data.materials[face.material_index].name):
             # if the toggle is active
-            if (context.scene.binjo_props.highlight_invis == True):
+            if (context.scene.binjo_props.highlight_invis):
                 # pure collision tris will be drawn in magenta
                 color_attribute.data[face.loop_indices[0]].color = (1.0, 0, 1.0, 1.0)
                 color_attribute.data[face.loop_indices[1]].color = (1.0, 0, 1.0, 1.0)
@@ -64,7 +65,7 @@ disable_collision_update_function = False
 def collision_changed(self, context):
     # only update the materials collision dict, if this wasnt disabled
     global disable_collision_update_function
-    if (disable_collision_update_function == False):
+    if (not disable_collision_update_function):
         # and check for object and active-mat existence
         if (context.active_object is not None):
             mat = context.active_object.active_material
@@ -78,7 +79,7 @@ def collision_changed(self, context):
 def RGBA_changed(self, context):
     # only update the materials collision dict, if this wasnt disabled
     global disable_collision_update_function
-    if (disable_collision_update_function == False):
+    if (not disable_collision_update_function):
         # update the selected RGBA display
         context.scene.binjo_props.custom_color_picker[0] = float(context.scene.binjo_props.color_picker_R / 255)
         context.scene.binjo_props.custom_color_picker[1] = float(context.scene.binjo_props.color_picker_G / 255)
@@ -546,7 +547,7 @@ class BINJO_PT_material_panel(bpy.types.Panel):
         
         inner_box = box.box()
         head_row = inner_box.row()
-        head_row.label(text=f"BINjo Material Collision Editor")
+        head_row.label(text="BINjo Material Collision Editor")
         
         mat = None
         if (context.active_object is not None):
@@ -585,16 +586,16 @@ class BINJO_PT_material_panel(bpy.types.Panel):
             element_columns = (element_row.column(), element_row.column())
             
             # determine how many rows will be needed for the display
-            if (context.scene.binjo_props.show_all_coll_flags == True):
+            if (context.scene.binjo_props.show_all_coll_flags):
                 # the +1 is basically like calling ceil() except without calling it
                 display_row_cnt = ((len(Dicts.COLLISION_FLAGS.keys()) + 1) // 2)
-            if (context.scene.binjo_props.show_all_coll_flags == False):
+            if (not context.scene.binjo_props.show_all_coll_flags):
                 display_row_cnt = 5
 
             displayed_elements = 0
             for idx, key in enumerate(mat["Collision_Flags"].keys()):
                 # if the toggle to show all flags is OFF, skip those that should be skipped
-                if ((context.scene.binjo_props.show_all_coll_flags == False) and ("UNK" in key or "(" in key)):
+                if ((not context.scene.binjo_props.show_all_coll_flags) and ("UNK" in key or "(" in key)):
                     continue
                 # if the element is the SFX value, skip it (handled further up in sfx_row)
                 if (key == "SFX Value"):
@@ -631,13 +632,12 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
     def execute(self, context):                 # execute() is called when running the operator.
         export_timer_start = timer()
         export_timer = timer()
-        scene = context.scene
 
-        if (os.path.isdir(context.scene.binjo_props.export_path) == False):
-            self.report({'ERROR'}, f"Export Path is not set to a viable Directory !")
+        if (not os.path.isdir(context.scene.binjo_props.export_path)):
+            self.report({'ERROR'}, "Export Path is not set to a viable Directory !")
             return {'CANCELLED'}
-        if (os.access(context.scene.binjo_props.export_path, (os.R_OK & os.W_OK)) == False):
-            self.report({'ERROR'}, f"Incorrect Permissions for Export Path Directory !")
+        if (not os.access(context.scene.binjo_props.export_path, (os.R_OK & os.W_OK))):
+            self.report({'ERROR'}, "Incorrect Permissions for Export Path Directory !")
             return {'CANCELLED'}
 
         global bin_handler
@@ -646,7 +646,7 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
 
         # grab the targetted object (NOTE: should grab every object later... ugh)
         if (context.active_object is None):
-            self.report({'ERROR'}, f"No Object selected to be exported !")
+            self.report({'ERROR'}, "No Object selected to be exported !")
             return {'CANCELLED'}
 
         target_object = context.active_object
@@ -676,10 +676,10 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
         # Create a BK Texture for every used Material (if it has an Image assigned) and create a Dict
         for idx, mat in enumerate(loaded_materials):
             # skip it, if it's not actually being used
-            if (material_is_used[idx] == False):
+            if (not material_is_used[idx]):
                 continue
             # materials that dont rock a texture get (-1)
-            if (mat.node_tree.nodes["TEX"].image == None):
+            if (mat.node_tree.nodes["TEX"].image is None):
                 material_tex_index_dict[mat.name] = -1
                 continue
             # create a tex object from the image data linked to this material
@@ -699,7 +699,7 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
 
 
 
-        print(f"Extracting granular Model Information + Building VtxSeg, DLSeg, ColSeg...")
+        print("Extracting granular Model Information + Building VtxSeg, DLSeg, ColSeg...")
         # sort every face into its own sub-list, to sepperate them by Material
         # (this makes building the DLs easier)
         polygon_list_list = [ [] for __ in range(loaded_mat_cnt)]
@@ -732,7 +732,7 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
 
             # filter out materials that are not actually being used
             # (Non-Binjo Materials will also be fitlered out here as a side-effect)
-            if (material_is_used[rep_poly.material_index] == False):
+            if (not material_is_used[rep_poly.material_index]):
                 continue
 
             # figure out which mat is assigned to this list
@@ -786,12 +786,12 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
                 # try to realign the UVs if they extend too far 
                 success = binjo_utils.realign_vtx_UVs(vtx_triplet, tex.width, tex.height)
                 if (success != 0):
-                    self.report({'ERROR'}, f"UVs of a Face are extending too much !")
+                    self.report({'ERROR'}, "UVs of a Face are extending too much !")
                     return {'CANCELLED'}
 
                 if (
-                    context.scene.binjo_props.force_model_A == True or \
-                    (tex_contains_transparency == False and face_contains_transparency == False)
+                    context.scene.binjo_props.force_model_A or \
+                    (not tex_contains_transparency and not face_contains_transparency)
                 ):
                     # add the triplet to the list of extracted verts
                     extracted_vertices_A.extend(vtx_triplet)
@@ -809,7 +809,7 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
                         collision_tris_A.append(tri)
                     # and if it has a valid tex_id, create the aforementioned DL command chunk for the buffered tris
                     print(tex_id, assigned_mat["Visibility_Disabled"])
-                    if (tex_id >= 0 and assigned_mat["Visibility_Disabled"] == False):
+                    if (tex_id >= 0 and not assigned_mat["Visibility_Disabled"]):
                         buffered_tris_A.append(tri)
                         print("hello DL ?")
                         # if we reached 10 buffered tris, we dump them into a tri-drawing chunk and flush it
@@ -833,7 +833,7 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
                     if (coll_type is not None):
                         collision_tris_B.append(tri)
                     # and if it has a valid tex_id, create the aforementioned DL command chunk for the buffered tris
-                    if (tex_id >= 0 and assigned_mat["Visibility_Disabled"] == False):
+                    if (tex_id >= 0 and not assigned_mat["Visibility_Disabled"]):
                         buffered_tris_B.append(tri)
                         # if we reached 10 buffered tris, we dump them into a tri-drawing chunk and flush it
                         # (the DL VTX-Buffer can hold 0x20==32 verts; 10 tris have 30 verts)
@@ -842,9 +842,9 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
                             buffered_tris_B = []
 
             # now the polygon loop is over; check if some buffered tris are left over
-            if (tex_id >= 0 and len(buffered_tris_A) > 0 and assigned_mat["Visibility_Disabled"] == False):
+            if (tex_id >= 0 and len(buffered_tris_A) > 0 and not assigned_mat["Visibility_Disabled"]):
                 DL_command_list_A.extend(ModelBIN_DLSeg.build_tri_drawing_commands(buffered_tris_A))
-            if (tex_id >= 0 and len(buffered_tris_B) > 0 and assigned_mat["Visibility_Disabled"] == False):
+            if (tex_id >= 0 and len(buffered_tris_B) > 0 and not assigned_mat["Visibility_Disabled"]):
                 DL_command_list_B.extend(ModelBIN_DLSeg.build_tri_drawing_commands(buffered_tris_B))
         
         # use the count of extracted A-model VTXs to determine if we need a A-Model at all
@@ -942,10 +942,10 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             tex_node = mat.node_tree.nodes["TEX"]
             tex_node.image = binjo_mat.Blender_IMG
             if (tex_node.image is not None):
-                if (os.path.isdir(context.scene.binjo_props.export_path) == False):
-                    self.report({'WARNING'}, f"Export Path is not set to a viable Directory - Not saving tmp Images...")
-                elif (os.access(context.scene.binjo_props.export_path, (os.R_OK & os.W_OK)) == False):
-                    self.report({'WARNING'}, f"Incorrect Permissions for Export Path Directory !")
+                if (not os.path.isdir(context.scene.binjo_props.export_path)):
+                    self.report({'WARNING'}, "Export Path is not set to a viable Directory - Not saving tmp Images...")
+                elif (not os.access(context.scene.binjo_props.export_path, (os.R_OK & os.W_OK))):
+                    self.report({'WARNING'}, "Incorrect Permissions for Export Path Directory !")
                 else:
                     tex_node.image.filepath_raw = f"{context.scene.binjo_props.export_path}/{tex_node.image.name}"
                     tex_node.image.save()
@@ -964,7 +964,6 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
         UV_layer = bpy.data.objects[new_obj_name].data.uv_layers[new_UV_name]
         col_attr = bpy.data.meshes[new_mesh_name].attributes[new_col_attr_name]
 
-        loop_ids = []
         for (face, tri) in zip(bpy.data.meshes[new_mesh_name].polygons, bin_handler.model_object.complete_tri_list):
             # set material index of the face according to the data within tri
             face.material_index = tri.mat_index
@@ -976,7 +975,7 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             # aswell as the RGBA shades
             if ("INVIS" in bpy.data.objects[new_obj_name].data.materials[face.material_index].name):
                 # if the toggle is active
-                if (context.scene.binjo_props.highlight_invis == True):
+                if (context.scene.binjo_props.highlight_invis):
                     # pure collision tris will be drawn in magenta
                     col_attr.data[face.loop_indices[0]].color = (1.0, 0, 1.0, 1.0)
                     col_attr.data[face.loop_indices[1]].color = (1.0, 0, 1.0, 1.0)
@@ -1018,7 +1017,7 @@ class BINJO_OT_import_from_ROM(bpy.types.Operator):
         bin_handler.load_model_file_from_ROM(scene.binjo_props.model_filename_enum)
 
         if (bin_handler.model_object is None):
-            self.report({'ERROR'}, f"No Model-Object could be pulled from the ROM !")
+            self.report({'ERROR'}, "No Model-Object could be pulled from the ROM !")
             return {'CANCELLED'}
         
         bpy.ops.conversion.from_bin_handler()
@@ -1035,14 +1034,13 @@ class BINJO_OT_import_from_BIN(bpy.types.Operator, ImportHelper):
 
     def execute(self, context):
         global bin_handler
-        scene = context.scene
 
         if (bin_handler is None):
             bin_handler = BINjo_ModelBIN_Handler(rom_filename=None)
         bin_handler.load_model_file_from_BIN(self.filepath)
 
         if (bin_handler.model_object is None):
-            self.report({'ERROR'}, f"No Model-Object could be pulled from the ROM !")
+            self.report({'ERROR'}, "No Model-Object could be pulled from the ROM !")
             return {'CANCELLED'}
         
         bpy.ops.conversion.from_bin_handler()
@@ -1070,7 +1068,7 @@ class BINJO_OT_dump_images(bpy.types.Operator):
         path = context.scene.binjo_props.export_path
         if (path == ""):
             return { 'CANCELLED' }
-        if (os.isdir(path) == False):
+        if (not os.isdir(path)):
             return { 'CANCELLED' }
         global bin_handler
         if (bin_handler is None):
@@ -1090,7 +1088,7 @@ class BINJO_OT_convert_all_mats_to_binjo(bpy.types.Operator):
         # check for object and active-mat existence
         target_object = context.active_object
         if (target_object is None):
-            self.report({'ERROR'}, f"No Object selected !")
+            self.report({'ERROR'}, "No Object selected !")
             return {'CANCELLED'}
                 
         # create over-arching layer/attribute elements
@@ -1108,9 +1106,8 @@ class BINJO_OT_convert_all_mats_to_binjo(bpy.types.Operator):
         # same for UVs
         if (len(target_object.data.uv_layers) > 0):
             target_object.data.uv_layers[0].name = "import_UV"
-            import_UV = target_object.data.uv_layers[0]
         else:
-            import_UV = imported_object.data.uv_layers.new(name="import_UV")
+            target_object.data.uv_layers.new(name="import_UV")
         
         for mat in target_object.data.materials:
             # only convert mats that dont match the current binjo version
@@ -1128,11 +1125,11 @@ class BINJO_OT_change_mat_img(bpy.types.Operator, ImportHelper):
     def execute(self, context):
         # check for object and active-mat existence
         if (context.active_object is None):
-            self.report({'ERROR'}, f"No Object selected !")
+            self.report({'ERROR'}, "No Object selected !")
             return {'CANCELLED'}
         mat = context.active_object.active_material
         if (mat is None):
-            self.report({'ERROR'}, f"No Material selected !")
+            self.report({'ERROR'}, "No Material selected !")
             return {'CANCELLED'}
             
         mat.node_tree.nodes["TEX"].image = bpy.data.images.load(self.filepath)
@@ -1151,7 +1148,7 @@ class BINJO_OT_shade_selected_verts(bpy.types.Operator):
         # check for object and active-mat existence
         target_object = context.active_object
         if (target_object is None):
-            self.report({'ERROR'}, f"No Object selected !")
+            self.report({'ERROR'}, "No Object selected !")
             return {'CANCELLED'}
         
         original_mode = target_object.mode
@@ -1165,13 +1162,13 @@ class BINJO_OT_shade_selected_verts(bpy.types.Operator):
         for face in target_object.data.polygons:
             for (vertex_idx, loop_idx) in zip(face.vertices, face.loop_indices):
                 # if the vtx is not selected, skip it
-                if (vertex_list[vertex_idx].select == False):
+                if (not vertex_list[vertex_idx].select):
                     continue
-                if (context.scene.binjo_props.enable_color_shading == True):
+                if (context.scene.binjo_props.enable_color_shading):
                     color_data[loop_idx].color[0] = new_rgba_vec[0]
                     color_data[loop_idx].color[1] = new_rgba_vec[1]
                     color_data[loop_idx].color[2] = new_rgba_vec[2]
-                if (context.scene.binjo_props.enable_alpha_shading == True):
+                if (context.scene.binjo_props.enable_alpha_shading):
                     color_data[loop_idx].color[3] = new_rgba_vec[3]
 
         bpy.ops.object.mode_set(mode=original_mode)
@@ -1187,27 +1184,26 @@ class BINJO_OT_shade_selected_faces(bpy.types.Operator):
         # check for object and active-mat existence
         target_object = context.active_object
         if (target_object is None):
-            self.report({'ERROR'}, f"No Object selected !")
+            self.report({'ERROR'}, "No Object selected !")
             return {'CANCELLED'}
         
         original_mode = target_object.mode
         bpy.ops.object.mode_set(mode='OBJECT')
         
-        # get the assigned color attribute data and the vertex-list
-        vertex_list  = target_object.data.vertices
+        # get the assigned color attribute data
         color_data   = target_object.data.color_attributes[0].data
         new_rgba_vec = context.scene.binjo_props.custom_color_picker
 
         for face in target_object.data.polygons:
             # if the face is not selected, skip it
-            if (face.select == False):
+            if (not face.select):
                 continue
             for loop_idx in face.loop_indices:
-                if (context.scene.binjo_props.enable_color_shading == True):
+                if (context.scene.binjo_props.enable_color_shading):
                     color_data[loop_idx].color[0] = new_rgba_vec[0]
                     color_data[loop_idx].color[1] = new_rgba_vec[1]
                     color_data[loop_idx].color[2] = new_rgba_vec[2]
-                if (context.scene.binjo_props.enable_alpha_shading == True):
+                if (context.scene.binjo_props.enable_alpha_shading):
                     color_data[loop_idx].color[3] = new_rgba_vec[3]
 
         bpy.ops.object.mode_set(mode=original_mode)
@@ -1223,7 +1219,7 @@ class BINJO_OT_copy_selected_shade(bpy.types.Operator):
         # check for object and active-mat existence
         target_object = context.active_object
         if (target_object is None):
-            self.report({'ERROR'}, f"No Object selected !")
+            self.report({'ERROR'}, "No Object selected !")
             return {'CANCELLED'}
         
         original_mode = target_object.mode
@@ -1237,7 +1233,7 @@ class BINJO_OT_copy_selected_shade(bpy.types.Operator):
         for face in target_object.data.polygons:
             for (vertex_idx, loop_idx) in zip(face.vertices, face.loop_indices):
                 # if the vtx is not selected, skip it
-                if (vertex_list[vertex_idx].select == True):
+                if (vertex_list[vertex_idx].select):
                     selected_vert_shades.append(color_data[loop_idx].color)
         new_rgba_vec = np.mean(selected_vert_shades, axis=0)
 
@@ -1260,7 +1256,7 @@ def set_mat_to_default(mat):
     # first, retain (potential) old images, and remove old nodes
     # pulled from BBMat4.1
     old_image = None
-    if (mat.use_nodes == True):
+    if (mat.use_nodes):
         for old_node in mat.node_tree.nodes:
             if old_node.type == "TEX_IMAGE":
                 old_image = old_node.image
@@ -1335,7 +1331,7 @@ class BINJO_OT_create_mat(bpy.types.Operator, ImportHelper):
         # check for object and active-mat existence
         target_object = context.active_object
         if (target_object is None):
-            self.report({'ERROR'}, f"No Object selected !")
+            self.report({'ERROR'}, "No Object selected !")
             return {'CANCELLED'}
 
         # if there is a color attr already, keep it and rename it for consistency
@@ -1351,9 +1347,8 @@ class BINJO_OT_create_mat(bpy.types.Operator, ImportHelper):
         # same for UVs
         if (len(target_object.data.uv_layers) > 0):
             target_object.data.uv_layers[0].name = "import_UV"
-            import_UV = target_object.data.uv_layers[0]
         else:
-            import_UV = imported_object.data.uv_layers.new(name="import_UV")
+            target_object.data.uv_layers.new(name="import_UV")
 
         mat = bpy.data.materials.new("new_mat")
         set_mat_to_default(mat)

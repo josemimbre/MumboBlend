@@ -1,0 +1,22 @@
+name: Lint
+
+on:
+  push:
+    paths:
+      - "BlenderAddOn/**"
+      - ".github/workflows/lint.yml"
+      - "ruff.toml"
+  pull_request:
+    paths:
+      - "BlenderAddOn/**"
+      - ".github/workflows/lint.yml"
+      - "ruff.toml"
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: "check BlenderAddOn/binjo_addon"

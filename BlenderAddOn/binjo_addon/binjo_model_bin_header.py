@@ -27,7 +27,7 @@ class ModelBIN_Header:
         self.unk_3              = 0x42C8_0000
 
         self.valid = True
-        if (bin_data == None):
+        if (bin_data is None):
             return        
             
         # parsed properties

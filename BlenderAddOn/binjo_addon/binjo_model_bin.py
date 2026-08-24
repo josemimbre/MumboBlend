@@ -2,10 +2,10 @@
 from . import binjo_utils
 from . binjo_model_bin_header import ModelBIN_Header
 from . binjo_model_bin_texture_seg import ModelBIN_TexSeg
-from . binjo_model_bin_vertex_seg import ModelBIN_VtxSeg, ModelBIN_VtxElem
+from . binjo_model_bin_vertex_seg import ModelBIN_VtxSeg
 from . binjo_model_bin_collision_seg import ModelBIN_ColSeg, ModelBIN_TriElem
 from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg, TileDescriptor
-from . binjo_model_bin_geolayout_seg import ModelBIN_GeoSeg, ModelBIN_GeoCommandChain
+from . binjo_model_bin_geolayout_seg import ModelBIN_GeoSeg
 
 from timeit import default_timer as timer
 
@@ -72,17 +72,17 @@ class ModelBIN:
 
         # write the incomplete Header (offsets are missing)
         # to determine the offsets during export
-        if (self.Header.valid == True):
+        if (self.Header.valid):
             output += self.Header.get_bytes()
             current_filesize = len(output)
 
-        if (self.TexSeg.valid == True):
+        if (self.TexSeg.valid):
             self.TexSeg.file_offset = current_filesize
             self.Header.tex_offset = self.TexSeg.file_offset
             output += self.TexSeg.get_bytes()
             current_filesize = len(output)
 
-        if (self.VtxSeg.valid == True):
+        if (self.VtxSeg.valid):
             self.VtxSeg.file_offset = current_filesize
             self.Header.vtx_offset = self.VtxSeg.file_offset
             self.Header.vtx_cnt = self.VtxSeg.vtx_cnt
@@ -91,13 +91,13 @@ class ModelBIN:
 
         # Bone
 
-        if (self.ColSeg.valid == True):
+        if (self.ColSeg.valid):
             self.ColSeg.file_offset = current_filesize
             self.Header.coll_offset = self.ColSeg.file_offset
             output += self.ColSeg.get_bytes()
             current_filesize = len(output)
 
-        if (self.DLSeg.valid == True):
+        if (self.DLSeg.valid):
             self.DLSeg.file_offset = current_filesize
             self.Header.DL_offset = self.DLSeg.file_offset
             # self.Header.tri_cnt = self.DLSeg.DL_tri_cnt # might be neccessary at some point
@@ -108,7 +108,7 @@ class ModelBIN:
         # FX_END
         # AnimTex
 
-        if (self.GeoSeg.valid == True):
+        if (self.GeoSeg.valid):
             self.GeoSeg.file_offset = current_filesize
             self.Header.geo_offset = self.GeoSeg.file_offset
             output += self.GeoSeg.get_bytes()
@@ -123,20 +123,20 @@ class ModelBIN:
     
     # combine the data from the Collision and DL Segments into one comprehensive list
     def build_complete_tri_list(self, TexSeg=None, ColSeg=None, DLSeg=None):
-        if (TexSeg == None):
+        if (TexSeg is None):
             TexSeg = self.TexSeg
-        if (ColSeg == None):
+        if (ColSeg is None):
             ColSeg = self.ColSeg
-        if (DLSeg == None):
+        if (DLSeg is None):
             DLSeg = self.DLSeg
         
-        if (ColSeg.valid == True):
+        if (ColSeg.valid):
             # start of by grabbing all the tris from the coll segment
             self.complete_tri_list = ColSeg.unique_tri_list.copy()
         else:
             self.complete_tri_list = []
 
-        if (DLSeg.valid == True):
+        if (DLSeg.valid):
             # then walk through the DLs with a TileDescriptor and a simulated VTX-Buffer to scan for visual tris;
             # the descriptor holds meta data for the GPU and handles the VTX-Buffer, which has a capacity of 32 tri-IDs
             descriptor_array = []
@@ -254,16 +254,16 @@ class ModelBIN:
             self.edge_idx_list.append((tri.index_2, tri.index_3))
             self.edge_idx_list.append((tri.index_3, tri.index_1))
 
-            if (tri.visible == False):
+            if (not tri.visible):
                 img_alias = "INVIS"
-            if (tri.visible == True and tri.tex_idx == None):
+            if (tri.visible and tri.tex_idx is None):
                 img_alias = "FLAT"
-            if (tri.visible == True and tri.tex_idx != None):
+            if (tri.visible and tri.tex_idx is not None):
                 datasection_offset_data = self.TexSeg.tex_elements[tri.tex_idx].datasection_offset_data
                 img_alias = f"{binjo_utils.to_decal_hex(datasection_offset_data, 4)}"
 
             coll_encoding = "NOCOLL"
-            if (tri.collision_type != None):
+            if (tri.collision_type is not None):
                 coll_encoding = f"{binjo_utils.to_decal_hex(tri.collision_type, 4)}"
 
             mat = BinjoMaterial(img_alias, coll_encoding)

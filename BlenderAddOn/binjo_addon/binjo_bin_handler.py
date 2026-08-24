@@ -2,7 +2,6 @@
 from . import binjo_utils
 from . binjo_model_bin import ModelBIN
 
-import os
 
 
 
@@ -34,8 +33,8 @@ class BINjo_ModelBIN_Handler:
         model_file_data = binjo_utils.extract_model(self.ROM_data, model_filename)
         if (model_file_data is None or len(model_file_data) == 0):
             print(f"Model File \"{model_filename}\" could not be loaded !")
-            print(f"Either Binjo straight up failed on it, or its empty !")
-            print(f"Cancelling Model instantiation...")
+            print("Either Binjo straight up failed on it, or its empty !")
+            print("Cancelling Model instantiation...")
             return
 
         self.model_object = ModelBIN()
@@ -51,8 +50,8 @@ class BINjo_ModelBIN_Handler:
             
         if (model_file_data is None or len(model_file_data) == 0):
             print(f"Model File \"{bin_filename}\" could not be loaded !")
-            print(f"Either Binjo straight up failed on it, or its empty !")
-            print(f"Cancelling Model instantiation...")
+            print("Either Binjo straight up failed on it, or its empty !")
+            print("Cancelling Model instantiation...")
             return
 
         self.model_object = ModelBIN()

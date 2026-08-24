@@ -152,7 +152,7 @@ def create_IMG_from_bytes(pixel_data, w, h):
         IMG = bpy.data.images.new("tmp", width=w, height=h)
         IMG.pixels = pixel_data
         return IMG
-    except:
+    except ImportError:
         print("BPY doesn't exist; You need to run this from Blender")
         return None
 
@@ -582,14 +582,14 @@ extra_file_offset = 0x10CD0
 def extract_model(data, filename):
     if (filename not in binjo_model_LU.map_model_lookup):
         print(f"Model Filename \"{filename}\" is not part of the LU in \"binjo_model_LU.py\" !")
-        print(f"Cancelling extraction...")
+        print("Cancelling extraction...")
         return None
     PT_Address = binjo_model_LU.map_model_lookup[filename][1]
     model_start_address = read_bytes(data, PT_Address + 0x00, 4) + extra_file_offset
     model_end_address   = read_bytes(data, PT_Address + 0x08, 4) + extra_file_offset
     if (model_start_address == model_end_address):
         print(f"Model Filename \"{filename}\" doesn't contain any Data !")
-        print(f"Cancelling...")
+        print("Cancelling...")
         return None
 
     print(f"Model Filename:\t\t{filename}")
