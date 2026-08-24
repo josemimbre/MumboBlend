@@ -1,0 +1,26 @@
+schema_version = "1.0.0"
+
+id = "binjo_addon"
+version = "0.1.3"
+name = "BINjo-Kazooie"
+tagline = "Import and export Banjo-Kazooie Model BIN files"
+maintainer = "josemimbre <11147737+josemimbre@users.noreply.github.com>"
+type = "add-on"
+
+website = "https://github.com/josemimbre/MumboBlend"
+
+tags = ["Import-Export"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+copyright = [
+  "2024 ThatCowGuy",
+  "2026 josemimbre",
+]
+
+[permissions]
+files = "Reads and writes Banjo-Kazooie ROM/Model-BIN files and exported textures from disk"
