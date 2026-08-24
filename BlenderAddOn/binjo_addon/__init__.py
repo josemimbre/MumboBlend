@@ -1273,11 +1273,19 @@ def set_mat_to_default(mat):
         
     # setting internal parameters within the mat
     mat.use_nodes = True
-    mat.blend_method = "HASHED" # "HASHED" == Dithered Transparency
-    mat.shadow_method = "NONE"
+    # "blend_method" (pre-4.2) got replaced by "surface_render_method" (4.2+); "shadow_method" got removed entirely in 4.3+
+    if (hasattr(mat, "surface_render_method")):
+        mat.surface_render_method = "DITHERED" # "DITHERED" == Dithered Transparency
+    else:
+        mat.blend_method = "HASHED" # "HASHED" == Dithered Transparency
+    if (hasattr(mat, "shadow_method")):
+        mat.shadow_method = "NONE"
     mat.use_backface_culling = True
     # setting exposed parameters within the mat
-    mat.node_tree.nodes["Principled BSDF"].inputs["Specular"].default_value = 0
+    # the Principled BSDF "Specular" input got renamed to "Specular IOR Level" in Blender 4.0+
+    principled_bsdf = mat.node_tree.nodes["Principled BSDF"]
+    specular_input = principled_bsdf.inputs.get("Specular IOR Level", principled_bsdf.inputs.get("Specular"))
+    specular_input.default_value = 0
             
     # texture node (NOTE that this will also assign "None" if the mat doesnt have an image)
     tex_node = mat.node_tree.nodes.new("ShaderNodeTexImage")
