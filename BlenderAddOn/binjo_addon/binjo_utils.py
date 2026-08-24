@@ -1,8 +1,9 @@
 
 import zlib
 import numpy as np
-# from PIL import Image 
+# from PIL import Image
 import sys
+import struct
 
 from . import binjo_model_LU
 from . binjo_dicts import Dicts
@@ -75,6 +76,12 @@ def get_2s_complement(value, byte_cnt):
 def int_to_bytes(val, cnt, endianness="big"):
     val = get_2s_complement(val, cnt)
     return val.to_bytes(cnt, byteorder=endianness)
+
+def read_float(data, offset):
+    return struct.unpack_from(">f", data, offset)[0]
+
+def float_to_bytes(val):
+    return struct.pack(">f", val)
     
 def concat_bytes(src, dst):
     if type(dst) is not list:

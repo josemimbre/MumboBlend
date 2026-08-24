@@ -3,6 +3,7 @@ from . import binjo_utils
 from . binjo_model_bin_header import ModelBIN_Header
 from . binjo_model_bin_texture_seg import ModelBIN_TexSeg
 from . binjo_model_bin_vertex_seg import ModelBIN_VtxSeg
+from . binjo_model_bin_bone_seg import ModelBIN_BoneSeg
 from . binjo_model_bin_collision_seg import ModelBIN_ColSeg, ModelBIN_TriElem
 from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg, TileDescriptor
 from . binjo_model_bin_geolayout_seg import ModelBIN_GeoSeg
@@ -13,7 +14,7 @@ class ModelBIN:
     # Header                done
     # Texture               done
     # Vertex                done
-    # Bone
+    # Bone                  done
     # Collision             done
     # DisplayList           wip
     # Effects
@@ -25,7 +26,7 @@ class ModelBIN:
         self.Header = ModelBIN_Header()
         self.TexSeg = ModelBIN_TexSeg()
         self.VtxSeg = ModelBIN_VtxSeg()
-        # Bone
+        self.BoneSeg = ModelBIN_BoneSeg()
         self.ColSeg = ModelBIN_ColSeg()
         self.DLSeg  = ModelBIN_DLSeg()
         # FX
@@ -46,7 +47,8 @@ class ModelBIN:
         self.VtxSeg.populate_from_data(bin_data, self.Header.vtx_offset, bin_header_vtx_cnt=self.Header.vtx_cnt)
         populate_timer = binjo_utils.report_time(populate_timer, "VTX Segment Populated")
 
-        # Bone
+        self.BoneSeg.populate_from_data(bin_data, self.Header.bone_offset)
+        populate_timer = binjo_utils.report_time(populate_timer, "Bone Segment Populated")
 
         self.ColSeg.populate_from_data(bin_data, self.Header.coll_offset)
         self.ColSeg.link_vertex_objects_for_all_tris(self.VtxSeg.vtx_list)
@@ -90,7 +92,7 @@ class ModelBIN:
         if (self.VtxSeg.valid):
             self.Header.vtx_cnt = self.VtxSeg.vtx_cnt
 
-        # Bone
+        write_segment(self.BoneSeg, "bone_offset")
 
         write_segment(self.ColSeg, "coll_offset")
 
