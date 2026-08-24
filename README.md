@@ -9,7 +9,7 @@ The project has two independent pieces:
 |                                                        | Language      | Status             | What it does                                                                                                                                                                                                 |
 | ------------------------------------------------------ | ------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [`BlenderAddOn/binjo_addon`](BlenderAddOn/binjo_addon) | Python        | Actively developed | Blender add-on: import a Model-BIN straight from a ROM (or a standalone `.bin`) into Blender as an editable mesh, tweak collision flags / materials / vertex shading, then export back to a valid Model-BIN. |
-| Root C# project (`Binjo.exe`)                          | C# / WinForms | Legacy             | Standalone BIN analyzer, with a GLTF export path (`GLTF_Handler.cs`).                                                                                                                                        |
+| [`BinjoAnalyzer`](BinjoAnalyzer) (`Binjo.exe`)         | C# / WinForms | Legacy             | Standalone BIN analyzer, with a GLTF export path (`GLTF_Handler.cs`).                                                                                                                                        |
 
 ## Blender Add-on
 
@@ -33,11 +33,11 @@ This is the main, maintained part of the repo.
 3. Edit the mesh, materials and collision flags as needed using the **BINjo Tools** panel (in the Material properties tab) and the **BINjo RGBA Shader** panel.
 4. Set an **Export Path** and click **Export to BIN** to write the modified data back out.
 
-See [`explanations/`](explanations) for example screenshots (collision flag shading, RGBA shader panel).
+See [`BlenderAddOn/explanations/`](BlenderAddOn/explanations) for example screenshots (collision flag shading, RGBA shader panel).
 
 ## Legacy C# Analyzer
 
-Open `Binjo.sln` in Visual Studio (targets .NET Framework 4.7.2) and build, or run `LAUNCH.bat` against a pre-built `bin/Debug/Binjo.exe`.
+Open [`BinjoAnalyzer/Binjo.sln`](BinjoAnalyzer/Binjo.sln) in Visual Studio (targets .NET Framework 4.7.2) and build, or run `BinjoAnalyzer/LAUNCH.bat` against a pre-built `BinjoAnalyzer/bin/Debug/Binjo.exe`.
 
 ## Notes
 

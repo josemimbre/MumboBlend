@@ -14,10 +14,10 @@
 
 *__pycache__*
 *.cache
-assets/*
-!assets/.gitkeep
-exports/*
-!exports/.gitkeep
+BinjoAnalyzer/assets/*
+!BinjoAnalyzer/assets/.gitkeep
+BinjoAnalyzer/exports/*
+!BinjoAnalyzer/exports/.gitkeep
 BlenderAddOn/exports/*
 !BlenderAddOn/exports/.gitkeep
 .vs/*
@@ -27,6 +27,6 @@ BlenderAddOn/.vscode/*
 BlenderAddOn/REBOOT_BLENDER.bat
 
 # .NET build output / restored NuGet packages
-bin/
-obj/
-packages/
+BinjoAnalyzer/bin/
+BinjoAnalyzer/obj/
+BinjoAnalyzer/packages/
