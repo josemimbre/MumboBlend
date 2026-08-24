@@ -579,12 +579,14 @@ def tri_intersects_cube(tri, cube):
 # files only start at this offset within the
 extra_file_offset = 0x10CD0
 
-def extract_model(data, filename):
-    if (filename not in binjo_model_LU.map_model_lookup):
+def extract_model(data, filename, lookup=None):
+    if (lookup is None):
+        lookup = binjo_model_LU.map_model_lookup
+    if (filename not in lookup):
         print(f"Model Filename \"{filename}\" is not part of the LU in \"binjo_model_LU.py\" !")
         print("Cancelling extraction...")
         return None
-    PT_Address = binjo_model_LU.map_model_lookup[filename][1]
+    PT_Address = lookup[filename][1]
     model_start_address = read_bytes(data, PT_Address + 0x00, 4) + extra_file_offset
     model_end_address   = read_bytes(data, PT_Address + 0x08, 4) + extra_file_offset
     if (model_start_address == model_end_address):

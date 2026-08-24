@@ -1,5 +1,6 @@
 
 from . import binjo_utils
+from . import binjo_model_LU
 from . binjo_model_bin import ModelBIN
 
 
@@ -33,6 +34,20 @@ class BINjo_ModelBIN_Handler:
         model_file_data = binjo_utils.extract_model(self.ROM_data, model_filename)
         if (model_file_data is None or len(model_file_data) == 0):
             print(f"Model File \"{model_filename}\" could not be loaded !")
+            print("Either Binjo straight up failed on it, or its empty !")
+            print("Cancelling Model instantiation...")
+            return
+
+        self.model_object = ModelBIN()
+        self.model_object.populate_from_data(model_file_data)
+        self.model_object.arrange_mesh_data()
+
+
+    # load a non-map model (character/prop/enemy, ...) from a ROM via model-filename
+    def load_object_file_from_ROM(self, model_filename):
+        model_file_data = binjo_utils.extract_model(self.ROM_data, model_filename, lookup=binjo_model_LU.object_model_lookup)
+        if (model_file_data is None or len(model_file_data) == 0):
+            print(f"Object Model File \"{model_filename}\" could not be loaded !")
             print("Either Binjo straight up failed on it, or its empty !")
             print("Cancelling Model instantiation...")
             return

@@ -249,6 +249,11 @@ class BINJO_Properties(bpy.types.PropertyGroup):
         default="(0x01) TTC - Treasure Trove Cove",
         items = [(name, name, "") for name in binjo_model_LU.map_model_lookup.keys()]
     )
+    object_filename_enum : bpy.props.EnumProperty(
+        name="Object File Name Enum",
+        description="Internal Object Model (character/prop/enemy) Filename Enum",
+        items = [(name, name, "") for name in binjo_model_LU.object_model_lookup.keys()]
+    )
     SFX_value_enum : bpy.props.EnumProperty(
         name="SFX Value",
         description="SFX Value Enum to determine Surface Sound",
@@ -298,6 +303,17 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row = layout.row()
         row.label(text="Scale Factor :")
         row.prop(context.scene.binjo_props, "scale_factor")
+
+        # import a non-map object (character/prop/enemy, ...) from ROM
+        layout.split()
+        layout.split()
+        row = layout.row()
+        row.label(text="Targetted Object :")
+        row = layout.row()
+        row.prop(context.scene.binjo_props, "object_filename_enum", text="")
+
+        row = layout.row()
+        row.operator("conversion.object_from_rom")
 
         # export
         layout.split()
@@ -851,6 +867,30 @@ class BINJO_OT_import_from_ROM(bpy.types.Operator):
 
 
 
+# init the bin-handler with data from ROM, grab a non-map Model-BIN (character/prop/enemy, ...) and convert it to a model
+class BINJO_OT_import_object_from_ROM(bpy.types.Operator):
+    """Import a character/prop/enemy model from a selected ROM"""
+    bl_idname = "conversion.object_from_rom"
+    bl_label = "Import Object from ROM"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        global bin_handler
+        scene = context.scene
+
+        if (bin_handler is None or bin_handler.ROM_name != scene.binjo_props.rom_path):
+            bin_handler = BINjo_ModelBIN_Handler(rom_filename=scene.binjo_props.rom_path)
+        bin_handler.load_object_file_from_ROM(scene.binjo_props.object_filename_enum)
+
+        if (bin_handler.model_object is None):
+            self.report({'ERROR'}, "No Model-Object could be pulled from the ROM !")
+            return {'CANCELLED'}
+
+        bpy.ops.conversion.from_bin_handler()
+        return {'FINISHED'}
+
+
+
 # init the bin-handler without data, and convert an external BIN to a model
 class BINJO_OT_import_from_BIN(bpy.types.Operator, ImportHelper):
     """Import a model from a selected BIN directly"""
@@ -1195,6 +1235,7 @@ classes = [
     BINJO_PT_material_panel,
     BINJO_OT_create_model_from_bin_handler,
     BINJO_OT_import_from_ROM,
+    BINJO_OT_import_object_from_ROM,
     BINJO_OT_import_from_BIN,
     BINJO_OT_export_to_BIN,
     BINJO_OT_dump_images,
