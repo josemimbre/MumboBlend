@@ -294,7 +294,7 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row = layout.row()
         row.label(text="Targetted Map :")
         row = layout.row()
-        row.prop(context.scene.binjo_props, "model_filename_enum", text="")
+        row.operator("conversion.search_map", text=context.scene.binjo_props.model_filename_enum, icon='VIEWZOOM')
 
         row = layout.row()
         row.operator("conversion.from_rom")
@@ -310,7 +310,7 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row = layout.row()
         row.label(text="Targetted Object :")
         row = layout.row()
-        row.prop(context.scene.binjo_props, "object_filename_enum", text="")
+        row.operator("conversion.search_object", text=context.scene.binjo_props.object_filename_enum, icon='VIEWZOOM')
 
         row = layout.row()
         row.operator("conversion.object_from_rom")
@@ -891,6 +891,51 @@ class BINJO_OT_import_object_from_ROM(bpy.types.Operator):
 
 
 
+# searchable popup for model_filename_enum (plain EnumProperty dropdowns don't support
+# type-to-filter on their own; this is Blender's documented way to add it)
+class BINJO_OT_search_map(bpy.types.Operator):
+    """Search Maps by Name"""
+    bl_idname = "conversion.search_map"
+    bl_label = "Search Map"
+    bl_property = "map_search_enum"
+
+    map_search_enum : bpy.props.EnumProperty(
+        name="Search Map",
+        items = [(name, name, "") for name in binjo_model_LU.map_model_lookup.keys()]
+    )
+
+    def execute(self, context):
+        context.scene.binjo_props.model_filename_enum = self.map_search_enum
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        context.window_manager.invoke_search_popup(self)
+        return {'FINISHED'}
+
+
+
+# searchable popup for object_filename_enum, same reasoning as BINJO_OT_search_map
+class BINJO_OT_search_object(bpy.types.Operator):
+    """Search Objects by Name"""
+    bl_idname = "conversion.search_object"
+    bl_label = "Search Object"
+    bl_property = "object_search_enum"
+
+    object_search_enum : bpy.props.EnumProperty(
+        name="Search Object",
+        items = [(name, name, "") for name in binjo_model_LU.object_model_lookup.keys()]
+    )
+
+    def execute(self, context):
+        context.scene.binjo_props.object_filename_enum = self.object_search_enum
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        context.window_manager.invoke_search_popup(self)
+        return {'FINISHED'}
+
+
+
 # init the bin-handler without data, and convert an external BIN to a model
 class BINJO_OT_import_from_BIN(bpy.types.Operator, ImportHelper):
     """Import a model from a selected BIN directly"""
@@ -1236,6 +1281,8 @@ classes = [
     BINJO_OT_create_model_from_bin_handler,
     BINJO_OT_import_from_ROM,
     BINJO_OT_import_object_from_ROM,
+    BINJO_OT_search_map,
+    BINJO_OT_search_object,
     BINJO_OT_import_from_BIN,
     BINJO_OT_export_to_BIN,
     BINJO_OT_dump_images,
