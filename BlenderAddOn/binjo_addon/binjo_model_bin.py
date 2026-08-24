@@ -70,49 +70,38 @@ class ModelBIN:
         output = bytearray()
         current_filesize = 0
 
+        def write_segment(seg, header_offset_attr):
+            nonlocal output, current_filesize
+            if (seg.valid):
+                seg.file_offset = current_filesize
+                setattr(self.Header, header_offset_attr, seg.file_offset)
+                output += seg.get_bytes()
+                current_filesize = len(output)
+
         # write the incomplete Header (offsets are missing)
         # to determine the offsets during export
         if (self.Header.valid):
             output += self.Header.get_bytes()
             current_filesize = len(output)
 
-        if (self.TexSeg.valid):
-            self.TexSeg.file_offset = current_filesize
-            self.Header.tex_offset = self.TexSeg.file_offset
-            output += self.TexSeg.get_bytes()
-            current_filesize = len(output)
+        write_segment(self.TexSeg, "tex_offset")
 
+        write_segment(self.VtxSeg, "vtx_offset")
         if (self.VtxSeg.valid):
-            self.VtxSeg.file_offset = current_filesize
-            self.Header.vtx_offset = self.VtxSeg.file_offset
             self.Header.vtx_cnt = self.VtxSeg.vtx_cnt
-            output += self.VtxSeg.get_bytes()
-            current_filesize = len(output)
 
         # Bone
 
-        if (self.ColSeg.valid):
-            self.ColSeg.file_offset = current_filesize
-            self.Header.coll_offset = self.ColSeg.file_offset
-            output += self.ColSeg.get_bytes()
-            current_filesize = len(output)
+        write_segment(self.ColSeg, "coll_offset")
 
-        if (self.DLSeg.valid):
-            self.DLSeg.file_offset = current_filesize
-            self.Header.DL_offset = self.DLSeg.file_offset
-            # self.Header.tri_cnt = self.DLSeg.DL_tri_cnt # might be neccessary at some point
-            output += self.DLSeg.get_bytes()
-            current_filesize = len(output)
-            
+        write_segment(self.DLSeg, "DL_offset")
+        # self.Header.tri_cnt = self.DLSeg.DL_tri_cnt # might be neccessary at some point
+
         # FX
         # FX_END
         # AnimTex
 
-        if (self.GeoSeg.valid):
-            self.GeoSeg.file_offset = current_filesize
-            self.Header.geo_offset = self.GeoSeg.file_offset
-            output += self.GeoSeg.get_bytes()
-            current_filesize = len(output)
+        write_segment(self.GeoSeg, "geo_offset")
 
         # I need to overwrite the incomplete Header
         for (idx, byte) in enumerate(self.Header.get_bytes()):
