@@ -30,3 +30,6 @@ BlenderAddOn/REBOOT_BLENDER.bat
 BinjoAnalyzer/bin/
 BinjoAnalyzer/obj/
 BinjoAnalyzer/packages/
+
+# addon distribution zip, rebuilt via `make zip`
+/BINjo_Kazooie.zip
