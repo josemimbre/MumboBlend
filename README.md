@@ -28,10 +28,11 @@ This is the main, maintained part of the repo.
 
 ### Usage
 
-1. Point **Source ROM** at your `.z64`/`.n64`/`.v64` file and pick the target map from the dropdown.
-2. Click **Import from ROM** (or **Import from BIN** to load a standalone Model-BIN instead).
-3. Edit the mesh, materials and collision flags as needed using the **BINjo Tools** panel (in the Material properties tab) and the **BINjo RGBA Shader** panel.
-4. Set an **Export Path** and click **Export to BIN** to write the modified data back out.
+1. Point **Source ROM** at your `.z64`/`.n64`/`.v64` file.
+2. Pick a target model from either the **Map** dropdown (levels/rooms) or the **Targetted Object** dropdown (characters, props, enemies) — both open a searchable popup to filter the list as you type.
+3. Click **Import from ROM** (or **Import Object from ROM** for the object selector; **Import from BIN** to load a standalone Model-BIN instead).
+4. Edit the mesh, materials and collision flags as needed using the **BINjo Tools** panel (in the Material properties tab) and the **BINjo RGBA Shader** panel.
+5. Set an **Export Path** and click **Export to BIN** to write the modified data back out.
 
 See [`BlenderAddOn/explanations/`](BlenderAddOn/explanations) for example screenshots (collision flag shading, RGBA shader panel).
 
