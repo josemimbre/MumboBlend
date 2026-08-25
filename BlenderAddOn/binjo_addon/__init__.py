@@ -836,6 +836,25 @@ def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
     return armature_obj
 
 
+# Assigns each vertex to a rigid (weight 1.0, no blending - see
+# ANIMATION_NOTES.md, untracked) vertex group matching the bone that the
+# GeoLayout tree draws it under (ModelBIN.vertex_bone_assignments, built by
+# build_complete_tri_list() while walking the DisplayList), then adds an
+# Armature modifier so posing/animating armature_obj actually deforms the mesh.
+def assign_vertex_groups_from_bones(mesh_obj, armature_obj, bone_seg, vertex_bone_assignments):
+    vertex_group_by_bone_idx = {}
+    for vtx_idx, bone_idx in vertex_bone_assignments.items():
+        if (bone_idx is None):
+            continue
+        if (bone_idx not in vertex_group_by_bone_idx):
+            bone_name = f"bone_{bone_seg.bone_list[bone_idx].internal_ID}"
+            vertex_group_by_bone_idx[bone_idx] = mesh_obj.vertex_groups.new(name=bone_name)
+        vertex_group_by_bone_idx[bone_idx].add([vtx_idx], 1.0, 'REPLACE')
+
+    modifier = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
+    modifier.object = armature_obj
+
+
 class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
     # this OP is hidden - used by the others
     bl_label = ""
@@ -927,7 +946,13 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
         scene.collection.objects.link(bpy.data.objects[new_obj_name])
 
         if (bin_handler.model_object.BoneSeg.valid):
-            build_armature_from_bones(bin_handler.model_object.BoneSeg, context.scene.binjo_props.scale_factor)
+            armature_obj = build_armature_from_bones(bin_handler.model_object.BoneSeg, context.scene.binjo_props.scale_factor)
+            assign_vertex_groups_from_bones(
+                bpy.data.objects[new_obj_name],
+                armature_obj,
+                bin_handler.model_object.BoneSeg,
+                bin_handler.model_object.vertex_bone_assignments
+            )
 
         # just some names to check if neccessary
         print([e.name for e in bpy.data.materials[0].node_tree.nodes["Principled BSDF"].inputs])

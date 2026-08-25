@@ -60,7 +60,9 @@ class ModelBIN:
         # FX
         # FX_END
         # AnimTex
-        # Geo ---- NOTE: Im currently ignoring this when building from ROM data
+
+        self.GeoSeg.populate_from_data(bin_data, self.Header.geo_offset)
+        populate_timer = binjo_utils.report_time(populate_timer, "GeoLayout Segment Populated")
 
         self.build_complete_tri_list()
         populate_timer = binjo_utils.report_time(populate_timer, "Tri-List completed")
@@ -113,19 +115,25 @@ class ModelBIN:
             output_file.write(output)
     
     # combine the data from the Collision and DL Segments into one comprehensive list
-    def build_complete_tri_list(self, TexSeg=None, ColSeg=None, DLSeg=None):
+    def build_complete_tri_list(self, TexSeg=None, ColSeg=None, DLSeg=None, GeoSeg=None):
         if (TexSeg is None):
             TexSeg = self.TexSeg
         if (ColSeg is None):
             ColSeg = self.ColSeg
         if (DLSeg is None):
             DLSeg = self.DLSeg
-        
+        if (GeoSeg is None):
+            GeoSeg = self.GeoSeg
+
         if (ColSeg.valid):
             # start of by grabbing all the tris from the coll segment
             self.complete_tri_list = ColSeg.unique_tri_list.copy()
         else:
             self.complete_tri_list = []
+
+        # vertex_index -> bone array index (see ModelBIN_GeoSeg.dl_bone_assignments);
+        # None means no bone claims this vertex (rigid, unanimated)
+        self.vertex_bone_assignments = {}
 
         if (DLSeg.valid):
             # then walk through the DLs with a TileDescriptor and a simulated VTX-Buffer to scan for visual tris;
@@ -135,7 +143,14 @@ class ModelBIN:
                 descriptor_array.append(TileDescriptor())
             active_descriptor = 0
             vertex_buffer = [0] * 0x20
-            for cmd in DLSeg.command_list:
+            # GeoLayout's bone-switch points are keyed by DL command-list index and,
+            # empirically, come in ascending contiguous runs matching a single linear
+            # walk of the DL - so one pass tracking "whichever switch point we most
+            # recently passed" is enough, no need to jump around per bone.
+            active_bone = None
+            for cmd_idx, cmd in enumerate(DLSeg.command_list):
+                if (GeoSeg.valid and cmd_idx in GeoSeg.dl_bone_assignments):
+                    active_bone = GeoSeg.dl_bone_assignments[cmd_idx]
 
                 if (cmd.command_name == "G_TEXTURE"):
                     active_descriptor = cmd.parameters[1]
@@ -162,6 +177,7 @@ class ModelBIN:
                     buffer_offset = cmd.parameters[0]
                     for idx in range(0, vtx_load_cnt):
                         vertex_buffer[buffer_offset + idx] = (first_vtx_idx + idx)
+                        self.vertex_bone_assignments[first_vtx_idx + idx] = active_bone
                     continue
 
                 if (cmd.command_name == "G_TRI1"):

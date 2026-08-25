@@ -40,6 +40,112 @@ class ModelBIN_GeoSeg:
     def __init__(self):
         self.valid = False
 
+    # Walks the GeoLayout command tree (see ANIMATION_NOTES.md, untracked, for
+    # the reverse-engineering trail) to figure out which DisplayList
+    # sub-section (by starting command-list index) is drawn under which
+    # bone. Every command has an 8-byte header (cmd_0, size_4); siblings at
+    # the same level are a flat chain ended by size_4==0, and branching
+    # commands recurse into a sub-chain at a command-relative byte offset.
+    #
+    # BONE (0x02) is the only command that changes "whose matrix applies
+    # here"; its unk9 (s8) is a direct index into the bone list (same
+    # indexing as ModelBIN_BoneElem.parent_ID), and its unk8 (u8) sub-chain
+    # is everything drawn under that bone. LOAD_DL (0x03) and the still-
+    # unnamed 0x07 both point at a DisplayList_Command starting index -
+    # those are recorded against whatever bone is currently active.
+    # SKINNING (0x05) lists several DL indices; only the first is given the
+    # active bone with full confidence (see notes - the rest are an
+    # approximation, since the exact sequential-matrix-cursor semantics
+    # aren't fully resolved yet).
+    #
+    # Branching-but-not-bone-related commands (billboard, sort, branch, LOD,
+    # selector) are all descended into unconditionally, since this is a
+    # static, ROM-wide analysis rather than a runtime trace with a single
+    # active branch - visiting every possible branch is what we want so no
+    # DL index is missed.
+    def populate_from_data(self, file_data, file_offset):
+        if file_offset == 0:
+            print("No GeoLayout Segment")
+            self.valid = False
+            return
+
+        self.file_offset = file_offset
+        self.dl_bone_assignments = {}
+        self._walk(file_data, file_offset, [])
+        print(f"parsed GeoLayout: {len(self.dl_bone_assignments)} bone-tagged DisplayList sections.")
+        self.valid = True
+        return
+
+    def _walk(self, file_data, offset, bone_stack):
+        while True:
+            cmd_0 = binjo_utils.read_bytes(file_data, offset + 0x00, 4)
+            size_4 = binjo_utils.read_bytes(file_data, offset + 0x04, 4)
+            active_bone = bone_stack[-1] if (bone_stack and bone_stack[-1] != -1) else None
+
+            if (cmd_0 == Dicts.GEO_CMD_NAMES["BONE"]):
+                sub_offset = binjo_utils.read_bytes(file_data, offset + 0x08, 1)
+                bone_idx   = binjo_utils.read_bytes(file_data, offset + 0x09, 1, type="signed")
+                if (sub_offset != 0):
+                    self._walk(file_data, offset + sub_offset, bone_stack + [bone_idx])
+
+            elif (cmd_0 == Dicts.GEO_CMD_NAMES["LOAD_DL"]):
+                dl_idx = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
+                self.dl_bone_assignments[dl_idx] = active_bone
+
+            elif (cmd_0 == 0x07):
+                dl_idx = binjo_utils.read_bytes(file_data, offset + 0x0A, 2)
+                self.dl_bone_assignments[dl_idx] = active_bone
+
+            elif (cmd_0 == Dicts.GEO_CMD_NAMES["SKINNING"]):
+                dl_idx = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
+                self.dl_bone_assignments[dl_idx] = active_bone
+                idx = 1
+                while True:
+                    extra_dl_idx = binjo_utils.read_bytes(file_data, offset + 0x08 + (idx * 2), 2)
+                    if (extra_dl_idx == 0):
+                        break
+                    # approximation: assumed to follow the same active bone
+                    # as the first entry, see the class-level note above
+                    self.dl_bone_assignments[extra_dl_idx] = active_bone
+                    idx += 1
+
+            elif (cmd_0 == 0x00):
+                sub_offset = binjo_utils.read_bytes(file_data, offset + 0x08, 2, type="signed")
+                if (sub_offset != 0):
+                    self._walk(file_data, offset + sub_offset, bone_stack)
+
+            elif (cmd_0 == Dicts.GEO_CMD_NAMES["SORT"]):
+                sub_offset_A = binjo_utils.read_bytes(file_data, offset + 0x22, 2, type="signed")
+                sub_offset_B = binjo_utils.read_bytes(file_data, offset + 0x24, 4, type="signed")
+                if (sub_offset_A != 0):
+                    self._walk(file_data, offset + sub_offset_A, bone_stack)
+                if (sub_offset_B != 0):
+                    self._walk(file_data, offset + sub_offset_B, bone_stack)
+
+            elif (cmd_0 == Dicts.GEO_CMD_NAMES["BRANCH"]):
+                sub_offset = binjo_utils.read_bytes(file_data, offset + 0x08, 4, type="signed")
+                if (sub_offset != 0):
+                    self._walk(file_data, offset + sub_offset, bone_stack)
+
+            elif (cmd_0 == Dicts.GEO_CMD_NAMES["LOD"]):
+                sub_offset = binjo_utils.read_bytes(file_data, offset + 0x1C, 4, type="signed")
+                if (sub_offset != 0):
+                    self._walk(file_data, offset + sub_offset, bone_stack)
+
+            elif (cmd_0 == Dicts.GEO_CMD_NAMES["SELECTOR"]):
+                child_cnt = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
+                for idx in range(0, child_cnt):
+                    child_offset = binjo_utils.read_bytes(file_data, offset + 0x0C + (idx * 4), 4, type="signed")
+                    if (child_offset != 0):
+                        self._walk(file_data, offset + child_offset, bone_stack)
+
+            # every other command (unknown/opaque or purely cosmetic, e.g.
+            # DRAW_DISTANCE, REFERENCE_POINT) has no sub-chain to recurse into
+
+            if (size_4 == 0):
+                return
+            offset += size_4
+
     def build_from_minmax(self, min_x, min_y, min_z, max_x, max_y, max_z):
         self.command_chains = []
 
