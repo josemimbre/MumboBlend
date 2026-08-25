@@ -797,7 +797,9 @@ def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
     for bone in bone_seg.bone_list:
         edit_bone = armature_data.edit_bones.new(f"bone_{bone.internal_ID}")
         pos = world_pos_by_id[bone.internal_ID]
-        edit_bone.head = (pos[0] / scale_factor, pos[1] / scale_factor, pos[2] / scale_factor)
+        # same axis swap/flip as ModelBIN.arrange_mesh_data() (BK's coord
+        # system doesn't match Blender's - Y/Z are swapped, and Z is flipped)
+        edit_bone.head = (pos[0] / scale_factor, -pos[2] / scale_factor, pos[1] / scale_factor)
         edit_bone_by_id[bone.internal_ID] = edit_bone
 
     for bone in bone_seg.bone_list:
