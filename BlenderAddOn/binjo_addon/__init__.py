@@ -18,6 +18,7 @@ from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg
 
 
 import bpy
+from mathutils import Matrix
 from bpy_extras.io_utils import ImportHelper
 from bpy.app.handlers import persistent
 # https://docs.blender.org/api/current/bpy_types_enum_items/operator_return_items.html
@@ -1077,6 +1078,27 @@ class BINJO_OT_search_animation(bpy.types.Operator):
 
 
 
+# linearly samples a list of AnimationKeyframe (sorted by frame) at an
+# arbitrary frame - a simplification of the game's real Catmull-Rom curves
+# (see ANIMATION_NOTES.md, untracked), used only to combine 3 independently-
+# timed rotation curves (pitch/yaw/roll) into one quaternion per bone
+def _sample_curve(keyframes, frame):
+    if (not keyframes):
+        return 0.0
+    if (frame <= keyframes[0].frame):
+        return keyframes[0].value
+    if (frame >= keyframes[-1].frame):
+        return keyframes[-1].value
+    for i in range(0, len(keyframes) - 1):
+        a, b = keyframes[i], keyframes[i + 1]
+        if (a.frame <= frame <= b.frame):
+            if (b.frame == a.frame):
+                return a.value
+            t = (frame - a.frame) / (b.frame - a.frame)
+            return a.value + t * (b.value - a.value)
+    return keyframes[-1].value
+
+
 # reads the selected .anim.bin from ROM and bakes it into a Blender Action on
 # the skeleton of the last imported model (rotation + translation only; see
 # ANIMATION_NOTES.md, untracked, for why scale isn't applied and how the
@@ -1133,39 +1155,68 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
         prev_active = context.view_layer.objects.active
         context.view_layer.objects.active = armature_obj
 
+        # group elements by bone, and rotation components together (they have
+        # to be combined into one matrix per frame - see the long comment
+        # below on why this can't just be 3 independent Euler channels)
+        elements_by_bone = {}
         for elem in anim_file.elements:
-            bone_name = f"bone_{elem.bone_id}"
+            elements_by_bone.setdefault(elem.bone_id, {})[elem.component] = elem
+
+        for bone_id, components in elements_by_bone.items():
+            bone_name = f"bone_{bone_id}"
             if (bone_name not in armature_obj.pose.bones):
                 continue
             pose_bone = armature_obj.pose.bones[bone_name]
 
-            if (elem.component in (binjo_animation.ROTATION_X, binjo_animation.ROTATION_Y, binjo_animation.ROTATION_Z)):
-                # the game composes rotations as Rx(pitch) . Ry(yaw) . Rz(roll)
-                # (mlMtxRotRoll, then RotYaw, then RotPitch, each left-multiplying
-                # the running matrix - see func_80345CD4 in the decomp). Blender's
-                # 'XYZ' Euler mode composes as Rz.Ry.Rx, the opposite order; 'ZYX'
-                # matches the game's order instead.
-                pose_bone.rotation_mode = 'ZYX'
-                axis_idx = {binjo_animation.ROTATION_X: 0, binjo_animation.ROTATION_Y: 2, binjo_animation.ROTATION_Z: 1}[elem.component]
-                data_path_attr = "rotation_euler"
-            elif (elem.component in (binjo_animation.TRANSLATION_X, binjo_animation.TRANSLATION_Y, binjo_animation.TRANSLATION_Z)):
-                axis_idx = {binjo_animation.TRANSLATION_X: 0, binjo_animation.TRANSLATION_Y: 2, binjo_animation.TRANSLATION_Z: 1}[elem.component]
-                data_path_attr = "location"
-            else:
-                # scale (component 3-5): not applied yet, see ANIMATION_NOTES.md
-                continue
-
-            for kf in elem.keyframes:
-                if (data_path_attr == "rotation_euler"):
-                    value = np.radians(kf.value)
-                    if (elem.component == binjo_animation.ROTATION_Z):  # game Z axis is flipped, see arrange_mesh_data()
-                        value = -value
-                else:
+            # --- translation (components 6/7/8): independent per axis, no
+            # composition-order issue, so keyframe each axis at its own native times
+            for component, axis_idx in ((binjo_animation.TRANSLATION_X, 0), (binjo_animation.TRANSLATION_Y, 2), (binjo_animation.TRANSLATION_Z, 1)):
+                elem = components.get(component)
+                if (elem is None):
+                    continue
+                for kf in elem.keyframes:
                     value = scaling_factor * kf.value / context.scene.binjo_props.scale_factor
-                    if (elem.component == binjo_animation.TRANSLATION_Z):
+                    if (component == binjo_animation.TRANSLATION_Z):
                         value = -value
-                getattr(pose_bone, data_path_attr)[axis_idx] = value
-                pose_bone.keyframe_insert(data_path=data_path_attr, index=axis_idx, frame=kf.frame)
+                    pose_bone.location[axis_idx] = value
+                    pose_bone.keyframe_insert(data_path="location", index=axis_idx, frame=kf.frame)
+
+            # --- rotation (components 0/1/2 = pitch/yaw/roll): the game
+            # composes these as R = Rx(-pitch) . Ry(-yaw) . Rz(-roll) (each
+            # mlMtxRot* left-multiplies the running matrix by a NEGATIVE-angle
+            # rotation about its axis - verified against the exact row-mixing
+            # arithmetic in mlmtx.c, not just the call order). Conjugating by
+            # the same coordinate change used for position/mesh
+            # (arrange_mesh_data's x,-z,y) gives, numerically verified:
+            #   R_blender = Rx(-pitch) . Rz(-yaw) . Ry(roll)
+            # Rather than trust a Blender Euler-order STRING to reproduce this
+            # (easy to get backwards - two earlier attempts at this were wrong),
+            # build the matrix directly with mathutils and keyframe the
+            # resulting quaternion. That also means the 3 curves (which have
+            # independent keyframe times) have to be resampled onto a shared
+            # set of frames first - done with simple linear interpolation,
+            # a simplification of the game's real Catmull-Rom curves.
+            pitch_elem = components.get(binjo_animation.ROTATION_X)
+            yaw_elem   = components.get(binjo_animation.ROTATION_Y)
+            roll_elem  = components.get(binjo_animation.ROTATION_Z)
+            if (pitch_elem or yaw_elem or roll_elem):
+                frames = sorted(set(
+                    [kf.frame for kf in (pitch_elem.keyframes if pitch_elem else [])] +
+                    [kf.frame for kf in (yaw_elem.keyframes if yaw_elem else [])] +
+                    [kf.frame for kf in (roll_elem.keyframes if roll_elem else [])]
+                ))
+                pose_bone.rotation_mode = 'QUATERNION'
+                for frame in frames:
+                    pitch = np.radians(_sample_curve(pitch_elem.keyframes, frame) if pitch_elem else 0.0)
+                    yaw   = np.radians(_sample_curve(yaw_elem.keyframes, frame) if yaw_elem else 0.0)
+                    roll  = np.radians(_sample_curve(roll_elem.keyframes, frame) if roll_elem else 0.0)
+                    R = (
+                        Matrix.Rotation(-pitch, 4, 'X') @
+                        Matrix.Rotation(-yaw, 4, 'Z') @
+                        Matrix.Rotation(roll, 4, 'Y')
+                    )
+                    pose_bone.rotation_quaternion = R.to_quaternion()
+                    pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
 
         context.view_layer.objects.active = prev_active
         context.scene.frame_start = anim_file.start_frame
