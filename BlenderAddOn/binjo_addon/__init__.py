@@ -18,7 +18,7 @@ from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg
 
 
 import bpy
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 from bpy_extras.io_utils import ImportHelper
 from bpy.app.handlers import persistent
 # https://docs.blender.org/api/current/bpy_types_enum_items/operator_return_items.html
@@ -1168,18 +1168,36 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
                 continue
             pose_bone = armature_obj.pose.bones[bone_name]
 
-            # --- translation (components 6/7/8): independent per axis, no
-            # composition-order issue, so keyframe each axis at its own native times
-            for component, axis_idx in ((binjo_animation.TRANSLATION_X, 0), (binjo_animation.TRANSLATION_Y, 2), (binjo_animation.TRANSLATION_Z, 1)):
-                elem = components.get(component)
-                if (elem is None):
-                    continue
-                for kf in elem.keyframes:
-                    value = scaling_factor * kf.value / context.scene.binjo_props.scale_factor
-                    if (component == binjo_animation.TRANSLATION_Z):
-                        value = -value
-                    pose_bone.location[axis_idx] = value
-                    pose_bone.keyframe_insert(data_path="location", index=axis_idx, frame=kf.frame)
+            # --- translation (components 6/7/8): the curve values are deltas
+            # in ARMATURE space (same axis swap/flip as everything else built
+            # from Model-BIN coordinates), but pose_bone.location is defined
+            # in the BONE's own LOCAL rest orientation, not armature space -
+            # every bone here was built with the same arbitrary tail
+            # direction (see build_armature_from_bones), so its local axes
+            # don't line up with the armature's. Combine the 3 (independently
+            # timed) curves into one armature-space vector per frame, same
+            # resampling approach as rotation below, then rotate that vector
+            # into the bone's local space via the inverse of its rest
+            # orientation before assigning it to .location.
+            x_elem = components.get(binjo_animation.TRANSLATION_X)
+            y_elem = components.get(binjo_animation.TRANSLATION_Y)
+            z_elem = components.get(binjo_animation.TRANSLATION_Z)
+            if (x_elem or y_elem or z_elem):
+                frames = sorted(set(
+                    [kf.frame for kf in (x_elem.keyframes if x_elem else [])] +
+                    [kf.frame for kf in (y_elem.keyframes if y_elem else [])] +
+                    [kf.frame for kf in (z_elem.keyframes if z_elem else [])]
+                ))
+                local_to_armature = pose_bone.bone.matrix_local.to_3x3()
+                armature_to_local = local_to_armature.inverted()
+                for frame in frames:
+                    game_dx = scaling_factor * (_sample_curve(x_elem.keyframes, frame) if x_elem else 0.0) / context.scene.binjo_props.scale_factor
+                    game_dy = scaling_factor * (_sample_curve(y_elem.keyframes, frame) if y_elem else 0.0) / context.scene.binjo_props.scale_factor
+                    game_dz = scaling_factor * (_sample_curve(z_elem.keyframes, frame) if z_elem else 0.0) / context.scene.binjo_props.scale_factor
+                    # same (x,y,z) -> (x,-z,y) swap/flip as arrange_mesh_data()
+                    armature_space_delta = Vector((game_dx, -game_dz, game_dy))
+                    pose_bone.location = armature_to_local @ armature_space_delta
+                    pose_bone.keyframe_insert(data_path="location", frame=frame)
 
             # --- rotation (components 0/1/2 = pitch/yaw/roll): the game
             # composes these as R = Rx(-pitch) . Ry(-yaw) . Rz(-roll) (each
