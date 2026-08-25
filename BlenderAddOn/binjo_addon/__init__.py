@@ -840,6 +840,11 @@ def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.objects.active = prev_active
 
+    # store on the object itself (not just a Python global) so it survives
+    # addon reloads / reopening the .blend file, unlike last_armature_obj/
+    # last_bone_seg below (kept as a same-session shortcut/fallback only)
+    armature_obj["binjo_scaling_factor"] = bone_seg.scaling_factor
+
     global last_armature_obj, last_bone_seg
     last_armature_obj = armature_obj
     last_bone_seg = bone_seg
@@ -1075,9 +1080,24 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
     def execute(self, context):
         global bin_handler, last_armature_obj, last_bone_seg
 
-        if (last_armature_obj is None or last_bone_seg is None):
-            self.report({'ERROR'}, "No imported skeleton to animate - import a model with bones first !")
+        # prefer the active/selected object so this still works after an
+        # addon reload or reopening the .blend (which wipes last_armature_obj,
+        # a plain Python global); fall back to last_armature_obj for
+        # same-session convenience if nothing suitable is selected
+        armature_obj = context.active_object
+        if (armature_obj is None or armature_obj.type != 'ARMATURE'):
+            armature_obj = last_armature_obj
+        if (armature_obj is None):
+            self.report({'ERROR'}, "No skeleton to animate - select an imported Armature (or import a model with bones) first !")
             return {'CANCELLED'}
+        if ("binjo_scaling_factor" in armature_obj):
+            scaling_factor = armature_obj["binjo_scaling_factor"]
+        elif (last_bone_seg is not None and last_armature_obj is armature_obj):
+            scaling_factor = last_bone_seg.scaling_factor
+        else:
+            self.report({'ERROR'}, f"\"{armature_obj.name}\" wasn't built by this addon (missing scaling factor) !")
+            return {'CANCELLED'}
+
         if (bin_handler is None or bin_handler.ROM_data is None):
             self.report({'ERROR'}, "No ROM data loaded - import from ROM first !")
             return {'CANCELLED'}
@@ -1091,13 +1111,18 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
         anim_file = binjo_animation.AnimationFile()
         anim_file.populate_from_data(anim_data)
 
-        armature_obj = last_armature_obj
         action = bpy.data.actions.new(anim_name)
         if (armature_obj.animation_data is None):
             armature_obj.animation_data_create()
         armature_obj.animation_data.action = action
 
-        scaling_factor = last_bone_seg.scaling_factor
+        # keyframe_insert() (rather than building action.fcurves by hand) is
+        # the API that stays compatible across Blender's old direct-fcurves
+        # Action storage and the newer layered Action system (4.4+), which
+        # dropped the plain .fcurves attribute this used to rely on.
+        prev_active = context.view_layer.objects.active
+        context.view_layer.objects.active = armature_obj
+
         for elem in anim_file.elements:
             bone_name = f"bone_{elem.bone_id}"
             if (bone_name not in armature_obj.pose.bones):
@@ -1107,20 +1132,16 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
             if (elem.component in (binjo_animation.ROTATION_X, binjo_animation.ROTATION_Y, binjo_animation.ROTATION_Z)):
                 pose_bone.rotation_mode = 'XYZ'
                 axis_idx = {binjo_animation.ROTATION_X: 0, binjo_animation.ROTATION_Y: 2, binjo_animation.ROTATION_Z: 1}[elem.component]
-                data_path = f'pose.bones["{bone_name}"].rotation_euler'
+                data_path_attr = "rotation_euler"
             elif (elem.component in (binjo_animation.TRANSLATION_X, binjo_animation.TRANSLATION_Y, binjo_animation.TRANSLATION_Z)):
                 axis_idx = {binjo_animation.TRANSLATION_X: 0, binjo_animation.TRANSLATION_Y: 2, binjo_animation.TRANSLATION_Z: 1}[elem.component]
-                data_path = f'pose.bones["{bone_name}"].location'
+                data_path_attr = "location"
             else:
                 # scale (component 3-5): not applied yet, see ANIMATION_NOTES.md
                 continue
 
-            fcurve = action.fcurves.find(data_path, index=axis_idx)
-            if (fcurve is None):
-                fcurve = action.fcurves.new(data_path, index=axis_idx)
-
             for kf in elem.keyframes:
-                if (elem.component in (binjo_animation.ROTATION_X, binjo_animation.ROTATION_Y, binjo_animation.ROTATION_Z)):
+                if (data_path_attr == "rotation_euler"):
                     value = np.radians(kf.value)
                     if (elem.component == binjo_animation.ROTATION_Z):  # game Z axis is flipped, see arrange_mesh_data()
                         value = -value
@@ -1128,8 +1149,10 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
                     value = scaling_factor * kf.value / context.scene.binjo_props.scale_factor
                     if (elem.component == binjo_animation.TRANSLATION_Z):
                         value = -value
-                fcurve.keyframe_points.insert(frame=kf.frame, value=value)
+                getattr(pose_bone, data_path_attr)[axis_idx] = value
+                pose_bone.keyframe_insert(data_path=data_path_attr, index=axis_idx, frame=kf.frame)
 
+        context.view_layer.objects.active = prev_active
         context.scene.frame_start = anim_file.start_frame
         context.scene.frame_end = anim_file.end_frame
         self.report({'INFO'}, f"Applied \"{anim_name}\" ({len(anim_file.elements)} curves) to {armature_obj.name}")
