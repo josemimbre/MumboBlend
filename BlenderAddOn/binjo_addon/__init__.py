@@ -1204,6 +1204,30 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
                     pose_bone.location = armature_to_local @ armature_space_delta
                     pose_bone.keyframe_insert(data_path="location", frame=frame)
 
+            # --- scale (components 3/4/5): always identical across all three
+            # in every real animation checked, i.e. uniform/isotropic scale -
+            # coordinate-space-independent, so no axis remap or local-space
+            # conjugation is needed here, unlike location/rotation. This is
+            # how the game hides/shows whole sub-parts (e.g. Kazooie's model,
+            # tucked into Banjo's backpack): scaled down to near-zero while
+            # hidden, animated back up to 1.0 where she pops out. Values are
+            # plain ratios, not positions, so scaling_factor doesn't apply.
+            sx_elem = components.get(binjo_animation.SCALE_X)
+            sy_elem = components.get(binjo_animation.SCALE_Y)
+            sz_elem = components.get(binjo_animation.SCALE_Z)
+            if (sx_elem or sy_elem or sz_elem):
+                frames = sorted(set(
+                    [kf.frame for kf in (sx_elem.keyframes if sx_elem else [])] +
+                    [kf.frame for kf in (sy_elem.keyframes if sy_elem else [])] +
+                    [kf.frame for kf in (sz_elem.keyframes if sz_elem else [])]
+                ))
+                for frame in frames:
+                    sx = _sample_curve(sx_elem.keyframes, frame) if sx_elem else 1.0
+                    sy = _sample_curve(sy_elem.keyframes, frame) if sy_elem else 1.0
+                    sz = _sample_curve(sz_elem.keyframes, frame) if sz_elem else 1.0
+                    pose_bone.scale = (sx, sy, sz)
+                    pose_bone.keyframe_insert(data_path="scale", frame=frame)
+
             # --- rotation (components 0/1/2 = pitch/yaw/roll): the game
             # composes these as R = Rx(-pitch) . Ry(-yaw) . Rz(-roll) (each
             # mlMtxRot* left-multiplies the running matrix by a NEGATIVE-angle
