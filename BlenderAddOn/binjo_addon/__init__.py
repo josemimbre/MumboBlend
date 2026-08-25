@@ -1140,7 +1140,12 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
             pose_bone = armature_obj.pose.bones[bone_name]
 
             if (elem.component in (binjo_animation.ROTATION_X, binjo_animation.ROTATION_Y, binjo_animation.ROTATION_Z)):
-                pose_bone.rotation_mode = 'XYZ'
+                # the game composes rotations as Rx(pitch) . Ry(yaw) . Rz(roll)
+                # (mlMtxRotRoll, then RotYaw, then RotPitch, each left-multiplying
+                # the running matrix - see func_80345CD4 in the decomp). Blender's
+                # 'XYZ' Euler mode composes as Rz.Ry.Rx, the opposite order; 'ZYX'
+                # matches the game's order instead.
+                pose_bone.rotation_mode = 'ZYX'
                 axis_idx = {binjo_animation.ROTATION_X: 0, binjo_animation.ROTATION_Y: 2, binjo_animation.ROTATION_Z: 1}[elem.component]
                 data_path_attr = "rotation_euler"
             elif (elem.component in (binjo_animation.TRANSLATION_X, binjo_animation.TRANSLATION_Y, binjo_animation.TRANSLATION_Z)):
