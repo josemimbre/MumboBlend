@@ -1078,13 +1078,16 @@ class BINJO_OT_search_animation(bpy.types.Operator):
 
 
 
-# linearly samples a list of AnimationKeyframe (sorted by frame) at an
+# linearly samples an AnimationElement's keyframes (sorted by frame) at an
 # arbitrary frame - a simplification of the game's real Catmull-Rom curves
-# (see ANIMATION_NOTES.md, untracked), used only to combine 3 independently-
-# timed rotation curves (pitch/yaw/roll) into one quaternion per bone
-def _sample_curve(keyframes, frame):
-    if (not keyframes):
-        return 0.0
+# (see ANIMATION_NOTES.md, untracked). elem may be None (bone has no curve
+# for this component), in which case `default` is returned unconditionally -
+# used to combine independently-timed curves (e.g. rotation pitch/yaw/roll)
+# into one value per component per frame without a per-call-site fallback
+def _sample_curve(elem, frame, default=0.0):
+    if (elem is None or not elem.keyframes):
+        return default
+    keyframes = elem.keyframes
     if (frame <= keyframes[0].frame):
         return keyframes[0].value
     if (frame >= keyframes[-1].frame):
@@ -1097,6 +1100,90 @@ def _sample_curve(keyframes, frame):
             t = (frame - a.frame) / (b.frame - a.frame)
             return a.value + t * (b.value - a.value)
     return keyframes[-1].value
+
+
+# union of keyframe frame numbers across any number of (possibly None)
+# AnimationElements - the shared set of frames to sample all of them at
+def _merged_frames(*elems):
+    return sorted({kf.frame for elem in elems if elem for kf in elem.keyframes})
+
+
+# This bone's own contribution to the animated pose, matching the game's
+# actual per-bone matrix construction (animMtxList_setBoned, decomp file
+# code_630D0.c):
+#   LocalBone = Translate(rest_pos + delta) @ Rotate @ Scale @ Translate(-rest_pos)
+# i.e. a pivot rotation/scale around the bone's own REST position (not a
+# nested "this bone's transform lives inside its parent's local frame"
+# transform, which is Blender's native bone convention but NOT what this
+# game format does - confirmed by reading the decomp source directly after
+# two failed attempts at guessing Blender-side conjugation formulas). rest_head
+# is this bone's rest head position, already in Blender space (same axis
+# swap/scale build_armature_from_bones used to build it). Missing curves
+# default to the game's own bind-pose neutral values (identity rotation,
+# scale 1, zero delta) - with those, this whole matrix collapses to Identity,
+# i.e. a component with no curve for this bone just doesn't move it.
+def _local_bone_matrix(rest_head, components, frame, scaling_factor, model_scale_factor):
+    pitch = np.radians(_sample_curve(components.get(binjo_animation.ROTATION_X), frame))
+    yaw   = np.radians(_sample_curve(components.get(binjo_animation.ROTATION_Y), frame))
+    roll  = np.radians(_sample_curve(components.get(binjo_animation.ROTATION_Z), frame))
+    # The earlier assumption that animMtxList_setBoned itself calls
+    # mlMtxRotPitch/Yaw/Roll with negated angles was wrong - it doesn't call
+    # them at all. It consumes a quaternion (BoneTransform.unk0) built once
+    # per frame by func_80345CD4 (code_BE2C0.c), which does exactly:
+    #   mlMtxIdent(); mlMtxRotRoll(roll); mlMtxRotYaw(yaw); mlMtxRotPitch(pitch);
+    # with NO negation anywhere. Each call left-multiplies the running
+    # matrix, so the LAST call ends up outermost: R_game = Rx(pitch) @
+    # Ry(yaw) @ Rz(roll). Conjugating by the same coordinate change used
+    # everywhere else (arrange_mesh_data's x,-z,y), using
+    # Conv@Rx(t)@Conv^-1=Rx(t), Conv@Ry(t)@Conv^-1=Rz(t), Conv@Rz(t)@Conv^-1=Ry(-t)
+    # (re-derived directly, not assumed) gives:
+    #   R_blender = Rx(pitch) @ Rz(yaw) @ Ry(-roll)
+    R = (
+        Matrix.Rotation(pitch, 3, 'X') @
+        Matrix.Rotation(yaw, 3, 'Z') @
+        Matrix.Rotation(-roll, 3, 'Y')
+    )
+
+    # scale (components 3/4/5) is always uniform/isotropic in every real
+    # animation checked - how the game hides/shows whole sub-parts (e.g.
+    # Kazooie tucked in Banjo's backpack)
+    scale = _sample_curve(components.get(binjo_animation.SCALE_X), frame, default=1.0)
+
+    game_dx = scaling_factor * _sample_curve(components.get(binjo_animation.TRANSLATION_X), frame) / model_scale_factor
+    game_dy = scaling_factor * _sample_curve(components.get(binjo_animation.TRANSLATION_Y), frame) / model_scale_factor
+    game_dz = scaling_factor * _sample_curve(components.get(binjo_animation.TRANSLATION_Z), frame) / model_scale_factor
+    delta = Vector((game_dx, -game_dz, game_dy))  # same (x,y,z) -> (x,-z,y) swap/flip as arrange_mesh_data()
+
+    RS = R.to_4x4()
+    RS[0][0] *= scale
+    RS[1][1] *= scale
+    RS[2][2] *= scale
+    return Matrix.Translation(rest_head + delta) @ RS @ Matrix.Translation(-rest_head)
+
+
+# Recursively chains _local_bone_matrix up through the parent hierarchy:
+#   Accum(this) = Accum(parent) @ LocalBone(this)
+# matching animMtxList_setBoned's mlMtxSet(parent-slot) + right-multiply
+# chain, entirely in Blender-space quantities. A bone with no curves of its
+# own (not a key in elements_by_bone) still has to appear in this chain -
+# its LocalBone collapses to Identity, so it just passes its parent's Accum
+# straight through (a rigid, unanimated extension of the parent). Cached per
+# (bone name, frame) since the same ancestor is revisited by every descendant
+# that needs a value at that frame.
+def _accum_matrix(pose_bone, frame, elements_by_bone, scaling_factor, model_scale_factor, cache):
+    key = (pose_bone.name, frame)
+    if (key in cache):
+        return cache[key]
+    if (pose_bone.parent is not None):
+        parent_accum = _accum_matrix(pose_bone.parent, frame, elements_by_bone, scaling_factor, model_scale_factor, cache)
+    else:
+        parent_accum = Matrix.Identity(4)
+    bone_id = int(pose_bone.name.removeprefix("bone_"))
+    components = elements_by_bone.get(bone_id, {})
+    local = _local_bone_matrix(pose_bone.bone.head_local, components, frame, scaling_factor, model_scale_factor)
+    result = parent_accum @ local
+    cache[key] = result
+    return result
 
 
 # reads the selected .anim.bin from ROM and bakes it into a Blender Action on
@@ -1134,6 +1221,8 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
             self.report({'ERROR'}, "No ROM data loaded - import from ROM first !")
             return {'CANCELLED'}
 
+        model_scale_factor = context.scene.binjo_props.scale_factor
+
         anim_name = context.scene.binjo_props.animation_enum
         anim_data = binjo_utils.extract_model(bin_handler.ROM_data, anim_name, lookup=binjo_model_LU.animation_lookup)
         if (anim_data is None):
@@ -1162,130 +1251,54 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
         for elem in anim_file.elements:
             elements_by_bone.setdefault(elem.bone_id, {})[elem.component] = elem
 
+        # Blender composes a posed bone as:
+        #   pose_bone.matrix (armature space) =
+        #       parent_pose_bone.matrix @ bone.matrix @ matrix_basis
+        # where bone.matrix is this bone's rest transform relative to its
+        # PARENT and matrix_basis is built from location/rotation_quaternion/
+        # scale - the values keyframe_insert below actually bakes. Blender's
+        # Armature modifier deforms a rigidly-weighted bind-pose vertex as
+        # `pose_bone.matrix @ bone.matrix_local.inverted() @ V_rest`, i.e.
+        # `pose_bone.matrix @ bone.matrix_local.inverted()` IS exactly the
+        # Accum(this bone) matrix _accum_matrix computes. Combining both
+        # relations and solving for matrix_basis (derivation checked
+        # numerically against Blender's own composition, see ANIMATION_NOTES.md,
+        # untracked):
+        #   matrix_basis = matrix_local.inverted() @ Accum(parent).inverted()
+        #                  @ Accum(this) @ matrix_local
+        # (Tried assigning pose_bone.matrix = Accum @ matrix_local directly
+        # and letting Blender's own setter solve matrix_basis first - for a
+        # bone with a parent this produced a DIFFERENT, wrong result than the
+        # formula above predicts and than manually recomposing
+        # parent.matrix @ bone.matrix @ matrix_basis confirms is correct, so
+        # matrix_basis is computed by hand here instead of trusting the
+        # setter.) decompose() then gives the loc/rot/scale to assign and
+        # keyframe - since Accum is pure Python recursion with no dependency
+        # on any bone's live Blender state, bone/frame processing order here
+        # doesn't matter.
+        accum_cache = {}
         for bone_id, components in elements_by_bone.items():
             bone_name = f"bone_{bone_id}"
             if (bone_name not in armature_obj.pose.bones):
                 continue
             pose_bone = armature_obj.pose.bones[bone_name]
-            # Blender composes a POSED bone as:
-            #   pose_bone.matrix (armature space) =
-            #       parent_pose_bone.matrix @ bone.matrix @ matrix_basis
-            # where bone.matrix is the rest transform relative to the PARENT
-            # (not bone.matrix_local, which is relative to the ARMATURE) and
-            # matrix_basis is built from location/rotation_quaternion/scale.
-            # Since every bone here is built with the exact same head->tail
-            # direction and default roll (build_armature_from_bones never
-            # sets .roll), every bone's matrix_local rotation is the *same*
-            # constant matrix - which means bone.matrix's rotation part
-            # (parent_matrix_local^-1 @ this_matrix_local) is IDENTITY for
-            # every non-root bone, and only the root carries a non-identity
-            # value. Using matrix_local (armature-space) instead of bone.matrix
-            # (parent-space) here bakes in one extra, uncancelled rest-rotation
-            # "sandwich" per generation of the hierarchy - invisible near the
-            # root, compounding worse the deeper the chain (exactly the
-            # torso-fine/extremities-wrong pattern that was reported).
-            local_to_parent = pose_bone.bone.matrix.to_3x3()
-            parent_to_local = local_to_parent.inverted()
+            pose_bone.rotation_mode = 'QUATERNION'
+            matrix_local = pose_bone.bone.matrix_local
 
-            # --- translation (components 6/7/8): the curve values are deltas
-            # in ARMATURE space (same axis swap/flip as everything else built
-            # from Model-BIN coordinates), but pose_bone.location is defined
-            # in the BONE's own LOCAL rest orientation, not armature space -
-            # every bone here was built with the same arbitrary tail
-            # direction (see build_armature_from_bones), so its local axes
-            # don't line up with the armature's. Combine the 3 (independently
-            # timed) curves into one armature-space vector per frame, same
-            # resampling approach as rotation below, then rotate that vector
-            # into the bone's local space via the inverse of its rest
-            # orientation before assigning it to .location.
-            x_elem = components.get(binjo_animation.TRANSLATION_X)
-            y_elem = components.get(binjo_animation.TRANSLATION_Y)
-            z_elem = components.get(binjo_animation.TRANSLATION_Z)
-            if (x_elem or y_elem or z_elem):
-                frames = sorted(set(
-                    [kf.frame for kf in (x_elem.keyframes if x_elem else [])] +
-                    [kf.frame for kf in (y_elem.keyframes if y_elem else [])] +
-                    [kf.frame for kf in (z_elem.keyframes if z_elem else [])]
-                ))
-                for frame in frames:
-                    game_dx = scaling_factor * (_sample_curve(x_elem.keyframes, frame) if x_elem else 0.0) / context.scene.binjo_props.scale_factor
-                    game_dy = scaling_factor * (_sample_curve(y_elem.keyframes, frame) if y_elem else 0.0) / context.scene.binjo_props.scale_factor
-                    game_dz = scaling_factor * (_sample_curve(z_elem.keyframes, frame) if z_elem else 0.0) / context.scene.binjo_props.scale_factor
-                    # same (x,y,z) -> (x,-z,y) swap/flip as arrange_mesh_data()
-                    armature_space_delta = Vector((game_dx, -game_dz, game_dy))
-                    pose_bone.location = parent_to_local @ armature_space_delta
-                    pose_bone.keyframe_insert(data_path="location", frame=frame)
-
-            # --- scale (components 3/4/5): always identical across all three
-            # in every real animation checked, i.e. uniform/isotropic scale -
-            # coordinate-space-independent, so no axis remap or local-space
-            # conjugation is needed here, unlike location/rotation. This is
-            # how the game hides/shows whole sub-parts (e.g. Kazooie's model,
-            # tucked into Banjo's backpack): scaled down to near-zero while
-            # hidden, animated back up to 1.0 where she pops out. Values are
-            # plain ratios, not positions, so scaling_factor doesn't apply.
-            sx_elem = components.get(binjo_animation.SCALE_X)
-            sy_elem = components.get(binjo_animation.SCALE_Y)
-            sz_elem = components.get(binjo_animation.SCALE_Z)
-            if (sx_elem or sy_elem or sz_elem):
-                frames = sorted(set(
-                    [kf.frame for kf in (sx_elem.keyframes if sx_elem else [])] +
-                    [kf.frame for kf in (sy_elem.keyframes if sy_elem else [])] +
-                    [kf.frame for kf in (sz_elem.keyframes if sz_elem else [])]
-                ))
-                for frame in frames:
-                    sx = _sample_curve(sx_elem.keyframes, frame) if sx_elem else 1.0
-                    sy = _sample_curve(sy_elem.keyframes, frame) if sy_elem else 1.0
-                    sz = _sample_curve(sz_elem.keyframes, frame) if sz_elem else 1.0
-                    pose_bone.scale = (sx, sy, sz)
-                    pose_bone.keyframe_insert(data_path="scale", frame=frame)
-
-            # --- rotation (components 0/1/2 = pitch/yaw/roll): the game
-            # composes these as R = Rx(-pitch) . Ry(-yaw) . Rz(-roll) (each
-            # mlMtxRot* left-multiplies the running matrix by a NEGATIVE-angle
-            # rotation about its axis - verified against the exact row-mixing
-            # arithmetic in mlmtx.c, not just the call order). Conjugating by
-            # the same coordinate change used for position/mesh
-            # (arrange_mesh_data's x,-z,y) gives, numerically verified:
-            #   R_blender = Rx(-pitch) . Rz(-yaw) . Ry(roll)
-            # Rather than trust a Blender Euler-order STRING to reproduce this
-            # (easy to get backwards - two earlier attempts at this were wrong),
-            # build the matrix directly with mathutils and keyframe the
-            # resulting quaternion. That also means the 3 curves (which have
-            # independent keyframe times) have to be resampled onto a shared
-            # set of frames first - done with simple linear interpolation,
-            # a simplification of the game's real Catmull-Rom curves.
-            pitch_elem = components.get(binjo_animation.ROTATION_X)
-            yaw_elem   = components.get(binjo_animation.ROTATION_Y)
-            roll_elem  = components.get(binjo_animation.ROTATION_Z)
-            if (pitch_elem or yaw_elem or roll_elem):
-                frames = sorted(set(
-                    [kf.frame for kf in (pitch_elem.keyframes if pitch_elem else [])] +
-                    [kf.frame for kf in (yaw_elem.keyframes if yaw_elem else [])] +
-                    [kf.frame for kf in (roll_elem.keyframes if roll_elem else [])]
-                ))
-                pose_bone.rotation_mode = 'QUATERNION'
-                for frame in frames:
-                    pitch = np.radians(_sample_curve(pitch_elem.keyframes, frame) if pitch_elem else 0.0)
-                    yaw   = np.radians(_sample_curve(yaw_elem.keyframes, frame) if yaw_elem else 0.0)
-                    roll  = np.radians(_sample_curve(roll_elem.keyframes, frame) if roll_elem else 0.0)
-                    R_armature = (
-                        Matrix.Rotation(-pitch, 3, 'X') @
-                        Matrix.Rotation(-yaw, 3, 'Z') @
-                        Matrix.Rotation(roll, 3, 'Y')
-                    )
-                    # matrix_basis's rotation just needs to cancel this bone's
-                    # rest-relative-to-PARENT rotation once (see local_to_parent
-                    # above) - R_armature is already this bone's own fixed-axes
-                    # local contribution, chained by Blender itself through
-                    # parent_pose_bone.matrix, so no re-application of
-                    # local_to_parent afterwards is needed (that was the bug:
-                    # using matrix_local for every bone, generation after
-                    # generation, sandwiched an uncancelled extra rest rotation
-                    # at each parent->child step).
-                    R_local = parent_to_local @ R_armature
-                    pose_bone.rotation_quaternion = R_local.to_quaternion()
-                    pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+            for frame in _merged_frames(*components.values()):
+                accum = _accum_matrix(pose_bone, frame, elements_by_bone, scaling_factor, model_scale_factor, accum_cache)
+                if (pose_bone.parent is not None):
+                    parent_accum = _accum_matrix(pose_bone.parent, frame, elements_by_bone, scaling_factor, model_scale_factor, accum_cache)
+                else:
+                    parent_accum = Matrix.Identity(4)
+                matrix_basis = matrix_local.inverted() @ parent_accum.inverted() @ accum @ matrix_local
+                loc, rot, scale = matrix_basis.decompose()
+                pose_bone.location = loc
+                pose_bone.rotation_quaternion = rot
+                pose_bone.scale = scale
+                pose_bone.keyframe_insert(data_path="location", frame=frame)
+                pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+                pose_bone.keyframe_insert(data_path="scale", frame=frame)
 
         context.view_layer.objects.active = prev_active
         context.scene.frame_start = anim_file.start_frame
