@@ -745,6 +745,93 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
 #===========================================================================================================
 
 
+# Builds a rest-pose Armature from a parsed Bone Segment. This is NOT wired up
+# to deform the imported mesh (no vertex groups / weights are assigned) -
+# the real game does not tie vertices to bones the way this addon's other
+# segments are understood; see ANIMATION_NOTES.md (untracked, not in the repo)
+# for the reverse-engineering trail. This just gives a positioned, correctly
+# parented skeleton to look at / measure against the mesh.
+def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
+    bone_by_id = {bone.internal_ID: bone for bone in bone_seg.bone_list}
+
+    # some models (observed on Banjo's own rig) have a handful of bones whose
+    # parent_ID is itself, or two bones that name each other as parent -
+    # not yet understood (see ANIMATION_NOTES.md, untracked), but left
+    # unguarded this would infinite-loop/crash Blender. Only the bones
+    # directly on such a cycle are treated as pseudo-roots; everything that
+    # merely descends from one keeps its real parent_ID and just stops
+    # accumulating at that now-rootless bone, same as it would at a normal root.
+    def is_on_a_cycle(start_bone):
+        cur = start_bone
+        for _ in range(len(bone_seg.bone_list)):
+            if (cur.parent_ID == 0xFFFF or cur.parent_ID not in bone_by_id):
+                return False
+            cur = bone_by_id[cur.parent_ID]
+            if (cur.internal_ID == start_bone.internal_ID):
+                return True
+        return False
+
+    effective_parent_id = {
+        bone.internal_ID: (0xFFFF if is_on_a_cycle(bone) else bone.parent_ID)
+        for bone in bone_seg.bone_list
+    }
+
+    # bone.x/y/z are offsets relative to the parent; walk the hierarchy to get
+    # absolute (armature-space) positions, memoizing as we go
+    world_pos_by_id = {}
+    def get_world_pos(bone):
+        if bone.internal_ID in world_pos_by_id:
+            return world_pos_by_id[bone.internal_ID]
+        parent_id = effective_parent_id[bone.internal_ID]
+        if parent_id == 0xFFFF or parent_id not in bone_by_id:
+            pos = (bone.x, bone.y, bone.z)
+        else:
+            parent_pos = get_world_pos(bone_by_id[parent_id])
+            pos = (parent_pos[0] + bone.x, parent_pos[1] + bone.y, parent_pos[2] + bone.z)
+        world_pos_by_id[bone.internal_ID] = pos
+        return pos
+    for bone in bone_seg.bone_list:
+        get_world_pos(bone)
+
+    children_by_parent_id = {}
+    for bone in bone_seg.bone_list:
+        children_by_parent_id.setdefault(effective_parent_id[bone.internal_ID], []).append(bone.internal_ID)
+
+    armature_data = bpy.data.armatures.new("import_Armature")
+    armature_obj = bpy.data.objects.new(name, armature_data)
+    bpy.context.scene.collection.objects.link(armature_obj)
+
+    prev_active = bpy.context.view_layer.objects.active
+    bpy.context.view_layer.objects.active = armature_obj
+    bpy.ops.object.mode_set(mode='EDIT')
+
+    MIN_BONE_LENGTH = 0.05
+    edit_bone_by_id = {}
+    for bone in bone_seg.bone_list:
+        edit_bone = armature_data.edit_bones.new(f"bone_{bone.internal_ID}")
+        pos = world_pos_by_id[bone.internal_ID]
+        edit_bone.head = (pos[0] / scale_factor, pos[1] / scale_factor, pos[2] / scale_factor)
+        edit_bone_by_id[bone.internal_ID] = edit_bone
+
+    for bone in bone_seg.bone_list:
+        edit_bone = edit_bone_by_id[bone.internal_ID]
+        parent_id = effective_parent_id[bone.internal_ID]
+        if (parent_id != 0xFFFF and parent_id in edit_bone_by_id):
+            edit_bone.parent = edit_bone_by_id[parent_id]
+
+        # tail = first child's head if there is one, else a small offset
+        # (Blender bones can't have zero length)
+        kids = children_by_parent_id.get(bone.internal_ID, [])
+        if (kids and (edit_bone_by_id[kids[0]].head - edit_bone.head).length > 1e-6):
+            edit_bone.tail = edit_bone_by_id[kids[0]].head
+        else:
+            edit_bone.tail = (edit_bone.head[0], edit_bone.head[1], edit_bone.head[2] + MIN_BONE_LENGTH)
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = prev_active
+    return armature_obj
+
+
 class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
     # this OP is hidden - used by the others
     bl_label = ""
@@ -834,6 +921,9 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
                 col_attr.data[face.loop_indices[2]].color = (tri.vtx_3.r/255, tri.vtx_3.g/255, tri.vtx_3.b/255, tri.vtx_3.a/255)
 
         scene.collection.objects.link(bpy.data.objects[new_obj_name])
+
+        if (bin_handler.model_object.BoneSeg.valid):
+            build_armature_from_bones(bin_handler.model_object.BoneSeg, context.scene.binjo_props.scale_factor)
 
         # just some names to check if neccessary
         print([e.name for e in bpy.data.materials[0].node_tree.nodes["Principled BSDF"].inputs])
