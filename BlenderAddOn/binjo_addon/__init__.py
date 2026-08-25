@@ -754,13 +754,21 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
 def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
     bone_by_id = {bone.internal_ID: bone for bone in bone_seg.bone_list}
 
+    # bone.x/y/z are already absolute (armature-space) positions, NOT offsets
+    # relative to the parent - confirmed by comparing the raw, unaccumulated
+    # bone coordinates against the model's own vertex bounding box (they
+    # match almost exactly). parent_ID only decides Blender bone parenting
+    # (outliner hierarchy / which bone's transform a child inherits when
+    # posed later), not position.
+    world_pos_by_id = {bone.internal_ID: (bone.x, bone.y, bone.z) for bone in bone_seg.bone_list}
+
     # some models (observed on Banjo's own rig) have a handful of bones whose
     # parent_ID is itself, or two bones that name each other as parent -
     # not yet understood (see ANIMATION_NOTES.md, untracked), but left
-    # unguarded this would infinite-loop/crash Blender. Only the bones
-    # directly on such a cycle are treated as pseudo-roots; everything that
-    # merely descends from one keeps its real parent_ID and just stops
-    # accumulating at that now-rootless bone, same as it would at a normal root.
+    # unguarded this would create a circular bone parent chain in Blender.
+    # Only the bones directly on such a cycle are treated as pseudo-roots;
+    # everything downstream keeps its real parent_ID (position is unaffected
+    # either way, since it no longer depends on the parent chain at all).
     def is_on_a_cycle(start_bone):
         cur = start_bone
         for _ in range(len(bone_seg.bone_list)):
@@ -775,23 +783,6 @@ def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
         bone.internal_ID: (0xFFFF if is_on_a_cycle(bone) else bone.parent_ID)
         for bone in bone_seg.bone_list
     }
-
-    # bone.x/y/z are offsets relative to the parent; walk the hierarchy to get
-    # absolute (armature-space) positions, memoizing as we go
-    world_pos_by_id = {}
-    def get_world_pos(bone):
-        if bone.internal_ID in world_pos_by_id:
-            return world_pos_by_id[bone.internal_ID]
-        parent_id = effective_parent_id[bone.internal_ID]
-        if parent_id == 0xFFFF or parent_id not in bone_by_id:
-            pos = (bone.x, bone.y, bone.z)
-        else:
-            parent_pos = get_world_pos(bone_by_id[parent_id])
-            pos = (parent_pos[0] + bone.x, parent_pos[1] + bone.y, parent_pos[2] + bone.z)
-        world_pos_by_id[bone.internal_ID] = pos
-        return pos
-    for bone in bone_seg.bone_list:
-        get_world_pos(bone)
 
     children_by_parent_id = {}
     for bone in bone_seg.bone_list:
