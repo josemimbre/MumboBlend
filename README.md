@@ -6,9 +6,9 @@ Tools to parse, export and replace data within Banjo-Kazooie (N64) `Model BIN` f
 
 The project has two independent pieces:
 
-|                                                        | Language      | What it does                                                                                                                                                                                                 |
-| ------------------------------------------------------ | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`BlenderAddOn/binjo_addon`](BlenderAddOn/binjo_addon) | Python        | Blender add-on: import a Model-BIN straight from a ROM (or a standalone `.bin`) into Blender as an editable mesh, tweak collision flags / materials / vertex shading, then export back to a valid Model-BIN. |
+|                                                        | Language      | What it does                                                                                                                                                                                                                      |
+| ------------------------------------------------------ | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`BlenderAddOn/binjo_addon`](BlenderAddOn/binjo_addon) | Python        | Blender add-on: import a Model-BIN straight from a ROM (or a standalone `.bin`) into Blender as an editable mesh, tweak collision flags / materials / vertex shading, then export back to a valid Model-BIN.                      |
 | [`BinjoAnalyzer`](BinjoAnalyzer) (`Binjo.exe`)         | C# / WinForms | Standalone desktop tool to inspect a Model-BIN's raw segments (header, textures, vertices, bones, collision, effects, GeoLayout) without opening Blender, replace individual textures, and export the model to glTF/OBJ/PNG/text. |
 
 ## Blender Add-on

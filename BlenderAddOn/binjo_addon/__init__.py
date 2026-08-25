@@ -1167,13 +1167,25 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
             if (bone_name not in armature_obj.pose.bones):
                 continue
             pose_bone = armature_obj.pose.bones[bone_name]
-            # rest orientation of this bone relative to the armature - every
-            # pose value (location, rotation_quaternion) is defined in this
-            # LOCAL frame, not armature space, and every bone here shares the
-            # same arbitrary rest orientation (build_armature_from_bones
-            # doesn't try to orient bones meaningfully)
-            local_to_armature = pose_bone.bone.matrix_local.to_3x3()
-            armature_to_local = local_to_armature.inverted()
+            # Blender composes a POSED bone as:
+            #   pose_bone.matrix (armature space) =
+            #       parent_pose_bone.matrix @ bone.matrix @ matrix_basis
+            # where bone.matrix is the rest transform relative to the PARENT
+            # (not bone.matrix_local, which is relative to the ARMATURE) and
+            # matrix_basis is built from location/rotation_quaternion/scale.
+            # Since every bone here is built with the exact same head->tail
+            # direction and default roll (build_armature_from_bones never
+            # sets .roll), every bone's matrix_local rotation is the *same*
+            # constant matrix - which means bone.matrix's rotation part
+            # (parent_matrix_local^-1 @ this_matrix_local) is IDENTITY for
+            # every non-root bone, and only the root carries a non-identity
+            # value. Using matrix_local (armature-space) instead of bone.matrix
+            # (parent-space) here bakes in one extra, uncancelled rest-rotation
+            # "sandwich" per generation of the hierarchy - invisible near the
+            # root, compounding worse the deeper the chain (exactly the
+            # torso-fine/extremities-wrong pattern that was reported).
+            local_to_parent = pose_bone.bone.matrix.to_3x3()
+            parent_to_local = local_to_parent.inverted()
 
             # --- translation (components 6/7/8): the curve values are deltas
             # in ARMATURE space (same axis swap/flip as everything else built
@@ -1201,7 +1213,7 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
                     game_dz = scaling_factor * (_sample_curve(z_elem.keyframes, frame) if z_elem else 0.0) / context.scene.binjo_props.scale_factor
                     # same (x,y,z) -> (x,-z,y) swap/flip as arrange_mesh_data()
                     armature_space_delta = Vector((game_dx, -game_dz, game_dy))
-                    pose_bone.location = armature_to_local @ armature_space_delta
+                    pose_bone.location = parent_to_local @ armature_space_delta
                     pose_bone.keyframe_insert(data_path="location", frame=frame)
 
             # --- scale (components 3/4/5): always identical across all three
@@ -1262,11 +1274,16 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
                         Matrix.Rotation(-yaw, 3, 'Z') @
                         Matrix.Rotation(roll, 3, 'Y')
                     )
-                    # pose_bone.rotation_quaternion is relative to the bone's
-                    # own rest orientation, not armature space - conjugate by
-                    # the rest orientation to get the equivalent local rotation
-                    # (same reasoning as the translation fix above)
-                    R_local = armature_to_local @ R_armature @ local_to_armature
+                    # matrix_basis's rotation just needs to cancel this bone's
+                    # rest-relative-to-PARENT rotation once (see local_to_parent
+                    # above) - R_armature is already this bone's own fixed-axes
+                    # local contribution, chained by Blender itself through
+                    # parent_pose_bone.matrix, so no re-application of
+                    # local_to_parent afterwards is needed (that was the bug:
+                    # using matrix_local for every bone, generation after
+                    # generation, sandwiched an uncancelled extra rest rotation
+                    # at each parent->child step).
+                    R_local = parent_to_local @ R_armature
                     pose_bone.rotation_quaternion = R_local.to_quaternion()
                     pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
 
