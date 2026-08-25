@@ -784,10 +784,6 @@ def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
         for bone in bone_seg.bone_list
     }
 
-    children_by_parent_id = {}
-    for bone in bone_seg.bone_list:
-        children_by_parent_id.setdefault(effective_parent_id[bone.internal_ID], []).append(bone.internal_ID)
-
     armature_data = bpy.data.armatures.new("import_Armature")
     armature_obj = bpy.data.objects.new(name, armature_data)
     bpy.context.scene.collection.objects.link(armature_obj)
@@ -810,13 +806,14 @@ def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
         if (parent_id != 0xFFFF and parent_id in edit_bone_by_id):
             edit_bone.parent = edit_bone_by_id[parent_id]
 
-        # tail = first child's head if there is one, else a small offset
-        # (Blender bones can't have zero length)
-        kids = children_by_parent_id.get(bone.internal_ID, [])
-        if (kids and (edit_bone_by_id[kids[0]].head - edit_bone.head).length > 1e-6):
-            edit_bone.tail = edit_bone_by_id[kids[0]].head
-        else:
-            edit_bone.tail = (edit_bone.head[0], edit_bone.head[1], edit_bone.head[2] + MIN_BONE_LENGTH)
+        # Always use a small fixed-length tail instead of pointing it at a
+        # child's head: some parent/child pairs in this data are unrelated
+        # detail bones (teeth, beak, ...) sitting far apart in space rather
+        # than a visually continuous limb segment, which produced huge
+        # diagonal "spike" bones when the tail followed the first child.
+        # This is a reference skeleton, not a posed rig, so each bone just
+        # needs to mark its own position correctly.
+        edit_bone.tail = (edit_bone.head[0], edit_bone.head[1], edit_bone.head[2] + MIN_BONE_LENGTH)
 
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.objects.active = prev_active
