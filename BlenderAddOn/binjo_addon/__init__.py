@@ -6,6 +6,7 @@ from timeit import default_timer as timer
 
 from . import binjo_utils
 from . import binjo_model_LU
+from . import binjo_animation
 from . binjo_model_bin import ModelBIN
 from . binjo_bin_handler import BINjo_ModelBIN_Handler
 from . binjo_dicts import Dicts
@@ -29,6 +30,8 @@ bl_info = {
     "category": "Object",
 }
 bin_handler = None
+last_armature_obj = None
+last_bone_seg = None
 version_num = "0.1.3"
 
 
@@ -254,6 +257,11 @@ class BINJO_Properties(bpy.types.PropertyGroup):
         description="Internal Object Model (character/prop/enemy) Filename Enum",
         items = [(name, name, "") for name in binjo_model_LU.object_model_lookup.keys()]
     )
+    animation_enum : bpy.props.EnumProperty(
+        name="Animation Enum",
+        description="Internal Animation Filename Enum",
+        items = [(name, name, "") for name in binjo_model_LU.animation_lookup.keys()]
+    )
     SFX_value_enum : bpy.props.EnumProperty(
         name="SFX Value",
         description="SFX Value Enum to determine Surface Sound",
@@ -314,6 +322,18 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
 
         row = layout.row()
         row.operator("conversion.object_from_rom")
+
+        # apply an animation (rotation + translation only, see ANIMATION_NOTES.md)
+        # to the skeleton of the last imported model
+        layout.split()
+        layout.split()
+        row = layout.row()
+        row.label(text="Animation :")
+        row = layout.row()
+        row.operator("conversion.search_animation", text=context.scene.binjo_props.animation_enum, icon='VIEWZOOM')
+
+        row = layout.row()
+        row.operator("conversion.apply_animation")
 
         # export
         layout.split()
@@ -819,6 +839,10 @@ def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
 
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.context.view_layer.objects.active = prev_active
+
+    global last_armature_obj, last_bone_seg
+    last_armature_obj = armature_obj
+    last_bone_seg = bone_seg
     return armature_obj
 
 
@@ -1012,6 +1036,103 @@ class BINJO_OT_search_object(bpy.types.Operator):
 
     def invoke(self, context, event):
         context.window_manager.invoke_search_popup(self)
+        return {'FINISHED'}
+
+
+
+# searchable popup for animation_enum, same reasoning as BINJO_OT_search_map
+class BINJO_OT_search_animation(bpy.types.Operator):
+    """Search Animations by Name"""
+    bl_idname = "conversion.search_animation"
+    bl_label = "Search Animation"
+    bl_property = "animation_search_enum"
+
+    animation_search_enum : bpy.props.EnumProperty(
+        name="Search Animation",
+        items = [(name, name, "") for name in binjo_model_LU.animation_lookup.keys()]
+    )
+
+    def execute(self, context):
+        context.scene.binjo_props.animation_enum = self.animation_search_enum
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        context.window_manager.invoke_search_popup(self)
+        return {'FINISHED'}
+
+
+
+# reads the selected .anim.bin from ROM and bakes it into a Blender Action on
+# the skeleton of the last imported model (rotation + translation only; see
+# ANIMATION_NOTES.md, untracked, for why scale isn't applied and how the
+# component layout / units were derived)
+class BINJO_OT_apply_animation(bpy.types.Operator):
+    """Apply the selected Animation to the last imported model's Armature"""
+    bl_idname = "conversion.apply_animation"
+    bl_label = "Apply Animation to Skeleton"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        global bin_handler, last_armature_obj, last_bone_seg
+
+        if (last_armature_obj is None or last_bone_seg is None):
+            self.report({'ERROR'}, "No imported skeleton to animate - import a model with bones first !")
+            return {'CANCELLED'}
+        if (bin_handler is None or bin_handler.ROM_data is None):
+            self.report({'ERROR'}, "No ROM data loaded - import from ROM first !")
+            return {'CANCELLED'}
+
+        anim_name = context.scene.binjo_props.animation_enum
+        anim_data = binjo_utils.extract_model(bin_handler.ROM_data, anim_name, lookup=binjo_model_LU.animation_lookup)
+        if (anim_data is None):
+            self.report({'ERROR'}, f"Could not extract Animation \"{anim_name}\" from the ROM !")
+            return {'CANCELLED'}
+
+        anim_file = binjo_animation.AnimationFile()
+        anim_file.populate_from_data(anim_data)
+
+        armature_obj = last_armature_obj
+        action = bpy.data.actions.new(anim_name)
+        if (armature_obj.animation_data is None):
+            armature_obj.animation_data_create()
+        armature_obj.animation_data.action = action
+
+        scaling_factor = last_bone_seg.scaling_factor
+        for elem in anim_file.elements:
+            bone_name = f"bone_{elem.bone_id}"
+            if (bone_name not in armature_obj.pose.bones):
+                continue
+            pose_bone = armature_obj.pose.bones[bone_name]
+
+            if (elem.component in (binjo_animation.ROTATION_X, binjo_animation.ROTATION_Y, binjo_animation.ROTATION_Z)):
+                pose_bone.rotation_mode = 'XYZ'
+                axis_idx = {binjo_animation.ROTATION_X: 0, binjo_animation.ROTATION_Y: 2, binjo_animation.ROTATION_Z: 1}[elem.component]
+                data_path = f'pose.bones["{bone_name}"].rotation_euler'
+            elif (elem.component in (binjo_animation.TRANSLATION_X, binjo_animation.TRANSLATION_Y, binjo_animation.TRANSLATION_Z)):
+                axis_idx = {binjo_animation.TRANSLATION_X: 0, binjo_animation.TRANSLATION_Y: 2, binjo_animation.TRANSLATION_Z: 1}[elem.component]
+                data_path = f'pose.bones["{bone_name}"].location'
+            else:
+                # scale (component 3-5): not applied yet, see ANIMATION_NOTES.md
+                continue
+
+            fcurve = action.fcurves.find(data_path, index=axis_idx)
+            if (fcurve is None):
+                fcurve = action.fcurves.new(data_path, index=axis_idx)
+
+            for kf in elem.keyframes:
+                if (elem.component in (binjo_animation.ROTATION_X, binjo_animation.ROTATION_Y, binjo_animation.ROTATION_Z)):
+                    value = np.radians(kf.value)
+                    if (elem.component == binjo_animation.ROTATION_Z):  # game Z axis is flipped, see arrange_mesh_data()
+                        value = -value
+                else:
+                    value = scaling_factor * kf.value / context.scene.binjo_props.scale_factor
+                    if (elem.component == binjo_animation.TRANSLATION_Z):
+                        value = -value
+                fcurve.keyframe_points.insert(frame=kf.frame, value=value)
+
+        context.scene.frame_start = anim_file.start_frame
+        context.scene.frame_end = anim_file.end_frame
+        self.report({'INFO'}, f"Applied \"{anim_name}\" ({len(anim_file.elements)} curves) to {armature_obj.name}")
         return {'FINISHED'}
 
 
@@ -1363,6 +1484,8 @@ classes = [
     BINJO_OT_import_object_from_ROM,
     BINJO_OT_search_map,
     BINJO_OT_search_object,
+    BINJO_OT_search_animation,
+    BINJO_OT_apply_animation,
     BINJO_OT_import_from_BIN,
     BINJO_OT_export_to_BIN,
     BINJO_OT_dump_images,
