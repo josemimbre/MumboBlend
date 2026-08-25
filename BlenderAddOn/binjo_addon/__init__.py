@@ -1167,6 +1167,13 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
             if (bone_name not in armature_obj.pose.bones):
                 continue
             pose_bone = armature_obj.pose.bones[bone_name]
+            # rest orientation of this bone relative to the armature - every
+            # pose value (location, rotation_quaternion) is defined in this
+            # LOCAL frame, not armature space, and every bone here shares the
+            # same arbitrary rest orientation (build_armature_from_bones
+            # doesn't try to orient bones meaningfully)
+            local_to_armature = pose_bone.bone.matrix_local.to_3x3()
+            armature_to_local = local_to_armature.inverted()
 
             # --- translation (components 6/7/8): the curve values are deltas
             # in ARMATURE space (same axis swap/flip as everything else built
@@ -1188,8 +1195,6 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
                     [kf.frame for kf in (y_elem.keyframes if y_elem else [])] +
                     [kf.frame for kf in (z_elem.keyframes if z_elem else [])]
                 ))
-                local_to_armature = pose_bone.bone.matrix_local.to_3x3()
-                armature_to_local = local_to_armature.inverted()
                 for frame in frames:
                     game_dx = scaling_factor * (_sample_curve(x_elem.keyframes, frame) if x_elem else 0.0) / context.scene.binjo_props.scale_factor
                     game_dy = scaling_factor * (_sample_curve(y_elem.keyframes, frame) if y_elem else 0.0) / context.scene.binjo_props.scale_factor
@@ -1228,12 +1233,17 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
                     pitch = np.radians(_sample_curve(pitch_elem.keyframes, frame) if pitch_elem else 0.0)
                     yaw   = np.radians(_sample_curve(yaw_elem.keyframes, frame) if yaw_elem else 0.0)
                     roll  = np.radians(_sample_curve(roll_elem.keyframes, frame) if roll_elem else 0.0)
-                    R = (
-                        Matrix.Rotation(-pitch, 4, 'X') @
-                        Matrix.Rotation(-yaw, 4, 'Z') @
-                        Matrix.Rotation(roll, 4, 'Y')
+                    R_armature = (
+                        Matrix.Rotation(-pitch, 3, 'X') @
+                        Matrix.Rotation(-yaw, 3, 'Z') @
+                        Matrix.Rotation(roll, 3, 'Y')
                     )
-                    pose_bone.rotation_quaternion = R.to_quaternion()
+                    # pose_bone.rotation_quaternion is relative to the bone's
+                    # own rest orientation, not armature space - conjugate by
+                    # the rest orientation to get the equivalent local rotation
+                    # (same reasoning as the translation fix above)
+                    R_local = armature_to_local @ R_armature @ local_to_armature
+                    pose_bone.rotation_quaternion = R_local.to_quaternion()
                     pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
 
         context.view_layer.objects.active = prev_active
