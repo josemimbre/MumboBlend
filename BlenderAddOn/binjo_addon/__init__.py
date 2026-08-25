@@ -772,7 +772,14 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
 # for the reverse-engineering trail. This just gives a positioned, correctly
 # parented skeleton to look at / measure against the mesh.
 def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
-    bone_by_id = {bone.internal_ID: bone for bone in bone_seg.bone_list}
+    # bone.parent_ID is a 0-based index into bone_seg.bone_list (file order),
+    # NOT another bone's internal_ID - confirmed against animMtxList_setBoned
+    # in the decomp (code_630D0.c), which uses the equivalent field as a
+    # direct index into its own matrix array ("mlMtxSet(&start_ptr[s0->mtx_id])"),
+    # and empirically: interpreting it as an internal_ID lookup produced
+    # self-referencing/mutually-cyclic "parents" on Banjo's own rig, while
+    # the array-index reading resolves all 60 bones to one clean root with
+    # zero exceptions. 0xFFFF means no parent (root).
 
     # bone.x/y/z are already absolute (armature-space) positions, NOT offsets
     # relative to the parent - confirmed by comparing the raw, unaccumulated
@@ -781,28 +788,6 @@ def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
     # (outliner hierarchy / which bone's transform a child inherits when
     # posed later), not position.
     world_pos_by_id = {bone.internal_ID: (bone.x, bone.y, bone.z) for bone in bone_seg.bone_list}
-
-    # some models (observed on Banjo's own rig) have a handful of bones whose
-    # parent_ID is itself, or two bones that name each other as parent -
-    # not yet understood (see ANIMATION_NOTES.md, untracked), but left
-    # unguarded this would create a circular bone parent chain in Blender.
-    # Only the bones directly on such a cycle are treated as pseudo-roots;
-    # everything downstream keeps its real parent_ID (position is unaffected
-    # either way, since it no longer depends on the parent chain at all).
-    def is_on_a_cycle(start_bone):
-        cur = start_bone
-        for _ in range(len(bone_seg.bone_list)):
-            if (cur.parent_ID == 0xFFFF or cur.parent_ID not in bone_by_id):
-                return False
-            cur = bone_by_id[cur.parent_ID]
-            if (cur.internal_ID == start_bone.internal_ID):
-                return True
-        return False
-
-    effective_parent_id = {
-        bone.internal_ID: (0xFFFF if is_on_a_cycle(bone) else bone.parent_ID)
-        for bone in bone_seg.bone_list
-    }
 
     armature_data = bpy.data.armatures.new("import_Armature")
     armature_obj = bpy.data.objects.new(name, armature_data)
@@ -824,9 +809,9 @@ def build_armature_from_bones(bone_seg, scale_factor, name="import_Skeleton"):
 
     for bone in bone_seg.bone_list:
         edit_bone = edit_bone_by_id[bone.internal_ID]
-        parent_id = effective_parent_id[bone.internal_ID]
-        if (parent_id != 0xFFFF and parent_id in edit_bone_by_id):
-            edit_bone.parent = edit_bone_by_id[parent_id]
+        if (bone.parent_ID != 0xFFFF and bone.parent_ID < len(bone_seg.bone_list)):
+            parent_bone = bone_seg.bone_list[bone.parent_ID]
+            edit_bone.parent = edit_bone_by_id[parent_bone.internal_ID]
 
         # Always use a small fixed-length tail instead of pointing it at a
         # child's head: some parent/child pairs in this data are unrelated
