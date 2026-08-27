@@ -7,6 +7,7 @@ from . binjo_model_bin_bone_seg import ModelBIN_BoneSeg
 from . binjo_model_bin_collision_seg import ModelBIN_ColSeg, ModelBIN_TriElem
 from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg, TileDescriptor
 from . binjo_model_bin_geolayout_seg import ModelBIN_GeoSeg
+from . binjo_model_bin_unk28_seg import ModelBIN_Unk28Seg
 
 from timeit import default_timer as timer
 
@@ -33,6 +34,7 @@ class ModelBIN:
         # FX_END
         # AnimTex
         self.GeoSeg = ModelBIN_GeoSeg()
+        self.Unk28Seg = ModelBIN_Unk28Seg()
 
     def populate_from_data(self, bin_data):
         populate_timer_start = timer()
@@ -63,6 +65,9 @@ class ModelBIN:
 
         self.GeoSeg.populate_from_data(bin_data, self.Header.geo_offset)
         populate_timer = binjo_utils.report_time(populate_timer, "GeoLayout Segment Populated")
+
+        self.Unk28Seg.populate_from_data(bin_data, self.Header.unk_2)
+        populate_timer = binjo_utils.report_time(populate_timer, "Unk28 Segment Populated")
 
         self.build_complete_tri_list()
         populate_timer = binjo_utils.report_time(populate_timer, "Tri-List completed")

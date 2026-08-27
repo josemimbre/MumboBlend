@@ -856,6 +856,54 @@ def assign_vertex_groups_from_bones(mesh_obj, armature_obj, bone_seg, vertex_bon
     modifier.object = armature_obj
 
 
+# BKModelUnk28List (see binjo_model_bin_unk28_seg.py for the full reverse-
+# engineering trail) - a table the real game re-applies every rendered
+# frame: a fixed bind-pose anchor coordinate gets transformed by ONE
+# specific bone's current matrix, and the result overwrites the position of
+# every vertex listed for that entry, regardless of which bone (if any)
+# those vertices were otherwise skinned to. Used for vertices drawn outside
+# any GeoLayout BONE wrapper, which would otherwise never move.
+#
+# Reproduced here at IMPORT time rather than per-frame: since Blender's
+# Armature modifier already computes exactly
+# `pose_bone.matrix @ bone.matrix_local.inverted() @ V_rest` for every
+# rigidly-weighted vertex every frame, overwriting these vertices' REST
+# position to the anchor coordinate (in the same space/scale as every other
+# vertex) and rigidly assigning them to entry.anim_index's own vertex group
+# makes the existing per-frame Armature deformation reproduce the game's
+# per-frame override automatically - no extra runtime code needed.
+def apply_vertex_pinning(mesh_obj, armature_obj, bone_seg, unk28_seg, scale_factor):
+    if (not unk28_seg.valid):
+        return
+
+    vertex_group_by_bone_idx = {}
+    for entry in unk28_seg.entry_list:
+        if (entry.anim_index < 0 or entry.anim_index >= len(bone_seg.bone_list)):
+            continue
+        bone_name = f"bone_{bone_seg.bone_list[entry.anim_index].internal_ID}"
+        if (bone_name not in armature_obj.pose.bones):
+            continue
+
+        if (entry.anim_index not in vertex_group_by_bone_idx):
+            vertex_group_by_bone_idx[entry.anim_index] = mesh_obj.vertex_groups.get(bone_name) or mesh_obj.vertex_groups.new(name=bone_name)
+        vertex_group = vertex_group_by_bone_idx[entry.anim_index]
+
+        # same axis swap/flip and scale as every other position built from
+        # raw Model-BIN coordinates (arrange_mesh_data/build_armature_from_bones)
+        anchor = (entry.x / scale_factor, -entry.z / scale_factor, entry.y / scale_factor)
+
+        for vtx_idx in entry.vtx_list:
+            if (vtx_idx >= len(mesh_obj.data.vertices)):
+                continue
+            mesh_obj.data.vertices[vtx_idx].co = anchor
+            # this bone alone drives it now - drop any other membership so
+            # the Armature modifier doesn't also apply a stale weight
+            for other_group in mesh_obj.vertex_groups:
+                if (other_group != vertex_group):
+                    other_group.remove([vtx_idx])
+            vertex_group.add([vtx_idx], 1.0, 'REPLACE')
+
+
 class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
     # this OP is hidden - used by the others
     bl_label = ""
@@ -953,6 +1001,13 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
                 armature_obj,
                 bin_handler.model_object.BoneSeg,
                 bin_handler.model_object.vertex_bone_assignments
+            )
+            apply_vertex_pinning(
+                bpy.data.objects[new_obj_name],
+                armature_obj,
+                bin_handler.model_object.BoneSeg,
+                bin_handler.model_object.Unk28Seg,
+                context.scene.binjo_props.scale_factor
             )
 
         # just some names to check if neccessary
