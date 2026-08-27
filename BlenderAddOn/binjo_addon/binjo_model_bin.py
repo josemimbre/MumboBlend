@@ -148,9 +148,27 @@ class ModelBIN:
             # walk of the DL - so one pass tracking "whichever switch point we most
             # recently passed" is enough, no need to jump around per bone.
             active_bone = None
+            # like active_bone, "are we currently inside an excluded chunk"
+            # has to PERSIST across the in-between command indices between
+            # one GeoLayout marker (LOAD_DL/SKINNING/0x07) and the next -
+            # only the marker's own index is recorded in dl_bone_assignments/
+            # excluded_dl_indices, not the G_VTX/G_TRI* commands that make up
+            # the rest of that chunk. Checking cmd_idx against
+            # excluded_dl_indices directly (without this persisted state)
+            # only skips the marker itself, letting the chunk's actual
+            # vertices/triangles fall through and get misattributed to
+            # whatever active_bone was left over from before the excluded
+            # chunk started.
+            currently_excluded = False
             for cmd_idx, cmd in enumerate(DLSeg.command_list):
                 if (GeoSeg.valid and cmd_idx in GeoSeg.dl_bone_assignments):
                     active_bone = GeoSeg.dl_bone_assignments[cmd_idx]
+                    currently_excluded = False
+                elif (GeoSeg.valid and cmd_idx in GeoSeg.excluded_dl_indices):
+                    currently_excluded = True
+
+                if (currently_excluded):
+                    continue
 
                 if (cmd.command_name == "G_TEXTURE"):
                     active_descriptor = cmd.parameters[1]

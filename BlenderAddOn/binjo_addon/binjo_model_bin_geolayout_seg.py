@@ -71,12 +71,39 @@ class ModelBIN_GeoSeg:
 
         self.file_offset = file_offset
         self.dl_bone_assignments = {}
+        # DL indices reached only through a non-first sibling LOD command -
+        # see the LOD handling below for why these need excluding entirely,
+        # not just left bone-untagged (build_complete_tri_list skips them).
+        self.excluded_dl_indices = set()
         self._walk(file_data, file_offset, [])
         print(f"parsed GeoLayout: {len(self.dl_bone_assignments)} bone-tagged DisplayList sections.")
         self.valid = True
         return
 
-    def _walk(self, file_data, offset, bone_stack):
+    def _walk(self, file_data, offset, bone_stack, is_excluded=False):
+        # LOD (0x08) commands can appear as consecutive SIBLINGS in the same
+        # flat chain, each with its own single sub-chain - confirmed against
+        # this specific ROM's data: there is exactly ONE such pair in the
+        # entire GeoLayout tree, sitting at the very root (file_offset
+        # itself), and BOTH siblings turned out to contain a complete
+        # parallel copy of the ENTIRE bone hierarchy (traced via a real
+        # symptom: Kazooie's leg bone ending up with 2x the expected vertex
+        # count, and Banjo's arm getting holes/overlapping geometry where
+        # the two copies' triangles didn't line up exactly - almost
+        # certainly near/far detail-level variants of the whole model,
+        # picked at runtime by a distance check this static data doesn't
+        # encode). Unlike SELECTOR, LOD has no explicit "choose 1 of N"
+        # field - it's just sibling commands - so there's no way to
+        # generalize this beyond "first LOD sibling in a chain wins, treat
+        # later ones as excluded alternates", which held up here because
+        # this file has only one such pair, isolated (nothing else shares
+        # its parent chain). An earlier, broader attempt at excluding
+        # non-first SELECTOR branches too caused a real regression (an
+        # unrelated bone absorbing content from a branch it did need) and
+        # was reverted; this LOD-only version does not touch SELECTOR at
+        # all, since SELECTOR branches are NOT confirmed to be mutually
+        # exclusive the way this LOD pair specifically is.
+        seen_lod_sibling = False
         while True:
             cmd_0 = binjo_utils.read_bytes(file_data, offset + 0x00, 4)
             size_4 = binjo_utils.read_bytes(file_data, offset + 0x04, 4)
@@ -86,19 +113,28 @@ class ModelBIN_GeoSeg:
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x08, 1)
                 bone_idx   = binjo_utils.read_bytes(file_data, offset + 0x09, 1, type="signed")
                 if (sub_offset != 0):
-                    self._walk(file_data, offset + sub_offset, bone_stack + [bone_idx])
+                    self._walk(file_data, offset + sub_offset, bone_stack + [bone_idx], is_excluded)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["LOAD_DL"]):
                 dl_idx = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
-                self.dl_bone_assignments[dl_idx] = active_bone
+                if (is_excluded):
+                    self.excluded_dl_indices.add(dl_idx)
+                else:
+                    self.dl_bone_assignments[dl_idx] = active_bone
 
             elif (cmd_0 == 0x07):
                 dl_idx = binjo_utils.read_bytes(file_data, offset + 0x0A, 2)
-                self.dl_bone_assignments[dl_idx] = active_bone
+                if (is_excluded):
+                    self.excluded_dl_indices.add(dl_idx)
+                else:
+                    self.dl_bone_assignments[dl_idx] = active_bone
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["SKINNING"]):
                 dl_idx = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
-                self.dl_bone_assignments[dl_idx] = active_bone
+                if (is_excluded):
+                    self.excluded_dl_indices.add(dl_idx)
+                else:
+                    self.dl_bone_assignments[dl_idx] = active_bone
                 idx = 1
                 while True:
                     extra_dl_idx = binjo_utils.read_bytes(file_data, offset + 0x08 + (idx * 2), 2)
@@ -106,38 +142,42 @@ class ModelBIN_GeoSeg:
                         break
                     # approximation: assumed to follow the same active bone
                     # as the first entry, see the class-level note above
-                    self.dl_bone_assignments[extra_dl_idx] = active_bone
+                    if (is_excluded):
+                        self.excluded_dl_indices.add(extra_dl_idx)
+                    else:
+                        self.dl_bone_assignments[extra_dl_idx] = active_bone
                     idx += 1
 
             elif (cmd_0 == 0x00):
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x08, 2, type="signed")
                 if (sub_offset != 0):
-                    self._walk(file_data, offset + sub_offset, bone_stack)
+                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["SORT"]):
                 sub_offset_A = binjo_utils.read_bytes(file_data, offset + 0x22, 2, type="signed")
                 sub_offset_B = binjo_utils.read_bytes(file_data, offset + 0x24, 4, type="signed")
                 if (sub_offset_A != 0):
-                    self._walk(file_data, offset + sub_offset_A, bone_stack)
+                    self._walk(file_data, offset + sub_offset_A, bone_stack, is_excluded)
                 if (sub_offset_B != 0):
-                    self._walk(file_data, offset + sub_offset_B, bone_stack)
+                    self._walk(file_data, offset + sub_offset_B, bone_stack, is_excluded)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["BRANCH"]):
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x08, 4, type="signed")
                 if (sub_offset != 0):
-                    self._walk(file_data, offset + sub_offset, bone_stack)
+                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["LOD"]):
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x1C, 4, type="signed")
                 if (sub_offset != 0):
-                    self._walk(file_data, offset + sub_offset, bone_stack)
+                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded or seen_lod_sibling)
+                seen_lod_sibling = True
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["SELECTOR"]):
                 child_cnt = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
                 for idx in range(0, child_cnt):
                     child_offset = binjo_utils.read_bytes(file_data, offset + 0x0C + (idx * 4), 4, type="signed")
                     if (child_offset != 0):
-                        self._walk(file_data, offset + child_offset, bone_stack)
+                        self._walk(file_data, offset + child_offset, bone_stack, is_excluded)
 
             # every other command (unknown/opaque or purely cosmetic, e.g.
             # DRAW_DISTANCE, REFERENCE_POINT) has no sub-chain to recurse into
