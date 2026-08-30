@@ -18,6 +18,7 @@ from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg
 
 
 import bpy
+import bmesh
 from mathutils import Matrix, Vector
 from bpy_extras.io_utils import ImportHelper
 from bpy.app.handlers import persistent
@@ -904,6 +905,24 @@ def apply_vertex_pinning(mesh_obj, armature_obj, bone_seg, unk28_seg, scale_fact
             vertex_group.add([vtx_idx], 1.0, 'REPLACE')
 
 
+# ModelBIN.arrange_mesh_data() emits one Blender vertex per raw Vertex-segment
+# entry, including ones whose only triangle(s) got dropped by the LOD-sibling
+# exclusion in ModelBIN_GeoSeg._walk() (see the LOD section, commit f595b4d)
+# - those are dead vertex-buffer data now, left with no face/edge at all.
+# Run this LAST (after vertex groups and Unk28 pinning, which both index by
+# the original raw vertex numbering) so nothing downstream needs remapping.
+def remove_orphan_loose_vertices(mesh_obj):
+    mesh = mesh_obj.data
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    loose = [v for v in bm.verts if not v.link_faces]
+    if (loose):
+        bmesh.ops.delete(bm, geom=loose, context='VERTS')
+        bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+
+
 class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
     # this OP is hidden - used by the others
     bl_label = ""
@@ -917,27 +936,29 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
 
         print("Creating new Object...")
         # setting up a new mesh for the scene
-        new_mesh_name = bpy.data.meshes.new("import_Mesh").name
-        new_obj_name = bpy.data.objects.new("import_Object", bpy.data.meshes[new_mesh_name]).name
+        new_mesh = bpy.data.meshes.new("import_Mesh")
+        new_obj = bpy.data.objects.new("import_Object", new_mesh)
 
         # this line essentially just divides every coord by the scale factor through a nested list-comprehension
         vertices    = [[(coord / context.scene.binjo_props.scale_factor) for coord in coordlist] for coordlist in bin_handler.model_object.vertex_coord_list]
         edges       = []
         faces       = bin_handler.model_object.face_idx_list
-        bpy.data.meshes[new_mesh_name].from_pydata(vertices, edges, faces)
+        new_mesh.from_pydata(vertices, edges, faces)
 
         # create over-arching layer/attribute elements
-        new_UV_name = bpy.data.objects[new_obj_name].data.uv_layers.new(name="import_UV").name
-        new_col_attr_name = bpy.data.meshes[new_mesh_name].attributes.new(
+        UV_layer = new_obj.data.uv_layers.new(name="import_UV")
+        col_attr = new_mesh.attributes.new(
             name='import_Color',
             domain='CORNER',
             type='BYTE_COLOR'
-        ).name
+        )
 
-        # now create actual materials from the mat-names
+        # now create actual materials from the mat-names (reuse an existing
+        # datablock if this model was already imported before, so repeated
+        # imports don't pile up NAME.001, NAME.002, ... duplicates)
         for binjo_mat in bin_handler.model_object.mat_list:
 
-            mat = bpy.data.materials.new(binjo_mat.name)
+            mat = bpy.data.materials.get(binjo_mat.name) or bpy.data.materials.new(binjo_mat.name)
             set_mat_to_default(mat)
             # assign the parsed Tex after defaulting the mat
             tex_node = mat.node_tree.nodes["TEX"]
@@ -959,13 +980,9 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             mat["Collision_SFX"] = ModelBIN_ColSeg.get_SFX_from_mat_name(mat.name)
 
             # and add it to the mat-list
-            bpy.data.objects[new_obj_name].data.materials.append(mat)
+            new_obj.data.materials.append(mat)
 
-        # since Im not creating new data, I can hold a ref to these now
-        UV_layer = bpy.data.objects[new_obj_name].data.uv_layers[new_UV_name]
-        col_attr = bpy.data.meshes[new_mesh_name].attributes[new_col_attr_name]
-
-        for (face, tri) in zip(bpy.data.meshes[new_mesh_name].polygons, bin_handler.model_object.complete_tri_list):
+        for (face, tri) in zip(new_mesh.polygons, bin_handler.model_object.complete_tri_list):
             # set material index of the face according to the data within tri
             face.material_index = tri.mat_index
             # and set the UV coords of the face through the loop indices
@@ -974,7 +991,7 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             UV_layer.data[face.loop_indices[2]].uv = (tri.vtx_3.transformed_U, tri.vtx_3.transformed_V)
             
             # aswell as the RGBA shades
-            if ("INVIS" in bpy.data.objects[new_obj_name].data.materials[face.material_index].name):
+            if ("INVIS" in new_obj.data.materials[face.material_index].name):
                 # if the toggle is active
                 if (context.scene.binjo_props.highlight_invis):
                     # pure collision tris will be drawn in magenta
@@ -992,23 +1009,25 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
                 col_attr.data[face.loop_indices[1]].color = (tri.vtx_2.r/255, tri.vtx_2.g/255, tri.vtx_2.b/255, tri.vtx_2.a/255)
                 col_attr.data[face.loop_indices[2]].color = (tri.vtx_3.r/255, tri.vtx_3.g/255, tri.vtx_3.b/255, tri.vtx_3.a/255)
 
-        scene.collection.objects.link(bpy.data.objects[new_obj_name])
+        scene.collection.objects.link(new_obj)
 
         if (bin_handler.model_object.BoneSeg.valid):
             armature_obj = build_armature_from_bones(bin_handler.model_object.BoneSeg, context.scene.binjo_props.scale_factor)
             assign_vertex_groups_from_bones(
-                bpy.data.objects[new_obj_name],
+                new_obj,
                 armature_obj,
                 bin_handler.model_object.BoneSeg,
                 bin_handler.model_object.vertex_bone_assignments
             )
             apply_vertex_pinning(
-                bpy.data.objects[new_obj_name],
+                new_obj,
                 armature_obj,
                 bin_handler.model_object.BoneSeg,
                 bin_handler.model_object.Unk28Seg,
                 context.scene.binjo_props.scale_factor
             )
+
+        remove_orphan_loose_vertices(new_obj)
 
         # just some names to check if neccessary
         print([e.name for e in bpy.data.materials[0].node_tree.nodes["Principled BSDF"].inputs])

@@ -167,9 +167,35 @@ class ModelBIN_GeoSeg:
                     self._walk(file_data, offset + sub_offset, bone_stack, is_excluded)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["LOD"]):
+                # confirmed against the decomp (func_80338B50, "Cmd8_LOD",
+                # modelRender.c): each sibling only draws when
+                # min_C < distance <= max_8 (min_C at +0x0C, max_8 at +0x08,
+                # both f32) - real data has these ranges contiguous/
+                # non-overlapping across the sibling run, so the sibling
+                # with the SMALLEST min_C is always the near/high-detail
+                # level, independent of file order (verified: on Banjo Low
+                # Poly the first sibling does happen to be the near one,
+                # [0, 670], with the second covering [670, 10000] - but
+                # that's this file's authoring order, not a format
+                # guarantee, so pick by threshold instead of position)
+                if (not seen_lod_sibling):
+                    run_offset = offset
+                    best_min_c, lod_winner_offset = None, None
+                    while True:
+                        run_cmd_0 = binjo_utils.read_bytes(file_data, run_offset + 0x00, 4)
+                        if (run_cmd_0 != Dicts.GEO_CMD_NAMES["LOD"]):
+                            break
+                        run_min_c = binjo_utils.read_float(file_data, run_offset + 0x0C)
+                        if (best_min_c is None or run_min_c < best_min_c):
+                            best_min_c, lod_winner_offset = run_min_c, run_offset
+                        run_size_4 = binjo_utils.read_bytes(file_data, run_offset + 0x04, 4)
+                        if (run_size_4 == 0):
+                            break
+                        run_offset += run_size_4
+
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x1C, 4, type="signed")
                 if (sub_offset != 0):
-                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded or seen_lod_sibling)
+                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded or (offset != lod_winner_offset))
                 seen_lod_sibling = True
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["SELECTOR"]):
