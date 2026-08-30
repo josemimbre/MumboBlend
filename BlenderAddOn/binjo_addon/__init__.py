@@ -1209,10 +1209,16 @@ def _local_bone_matrix(rest_head, components, frame, scaling_factor, model_scale
     game_dz = scaling_factor * _sample_curve(components.get(binjo_animation.TRANSLATION_Z), frame) / model_scale_factor
     delta = Vector((game_dx, -game_dz, game_dy))  # same (x,y,z) -> (x,-z,y) swap/flip as arrange_mesh_data()
 
-    RS = R.to_4x4()
-    RS[0][0] *= scale
-    RS[1][1] *= scale
-    RS[2][2] *= scale
+    # NOTE: scaling just the diagonal (RS[i][i] *= scale) is WRONG for any
+    # non-diagonal R - it only reproduces a true uniform scale-of-a-rotation
+    # (determinant scale^3) when R happens to be diagonal already (a bare
+    # 0/90/180/270-degree single-axis case). For a general rotation it bakes
+    # in real shear (verified numerically: 45deg @ scale=0.5 gave determinant
+    # 0.3125 instead of the correct 0.125 = 0.5^3). Multiplying the whole
+    # matrix by the (uniform) scale factor is the correct, commutative way
+    # to combine them, since scale*R == R@diag(scale,scale,scale) for a
+    # uniform scale.
+    RS = (R @ Matrix.Scale(scale, 3)).to_4x4()
     return Matrix.Translation(rest_head + delta) @ RS @ Matrix.Translation(-rest_head)
 
 
