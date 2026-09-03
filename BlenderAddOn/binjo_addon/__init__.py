@@ -1260,22 +1260,35 @@ def _local_bone_matrix(rest_head, components, frame, scaling_factor, model_scale
     pitch = np.radians(_sample_curve(components.get(binjo_animation.ROTATION_X), frame))
     yaw   = np.radians(_sample_curve(components.get(binjo_animation.ROTATION_Y), frame))
     roll  = np.radians(_sample_curve(components.get(binjo_animation.ROTATION_Z), frame))
-    # The earlier assumption that animMtxList_setBoned itself calls
-    # mlMtxRotPitch/Yaw/Roll with negated angles was wrong - it doesn't call
-    # them at all. It consumes a quaternion (BoneTransform.unk0) built once
-    # per frame by func_80345CD4 (code_BE2C0.c), which does exactly:
+    # animMtxList_setBoned consumes a quaternion (BoneTransform.unk0) built
+    # once per frame by func_80345CD4 (code_BE2C0.c), which does exactly:
     #   mlMtxIdent(); mlMtxRotRoll(roll); mlMtxRotYaw(yaw); mlMtxRotPitch(pitch);
-    # with NO negation anywhere. Each call left-multiplies the running
-    # matrix, so the LAST call ends up outermost: R_game = Rx(pitch) @
-    # Ry(yaw) @ Rz(roll). Conjugating by the same coordinate change used
-    # everywhere else (arrange_mesh_data's x,-z,y), using
-    # Conv@Rx(t)@Conv^-1=Rx(t), Conv@Ry(t)@Conv^-1=Rz(t), Conv@Rz(t)@Conv^-1=Ry(-t)
-    # (re-derived directly, not assumed) gives:
-    #   R_blender = Rx(pitch) @ Rz(yaw) @ Ry(-roll)
+    # with NO negation anywhere.
+    #
+    # Those helpers (mlmtx.c) do M := A @ M, so after the sequence above
+    # M = A_pitch @ A_yaw @ A_roll. Crucially the game is ROW-vector: mlmtx.c
+    # transforms a point as `x*m[0][0] + y*m[1][0] + z*m[2][0] + m[3][0]`
+    # (translation in the last ROW), i.e. v' = v @ M. Blender/mathutils are
+    # column-vector, and transposing reverses the product:
+    #   R_game(column) = A_roll^T @ A_yaw^T @ A_pitch^T
+    # Each A^T is the plain rotation about its axis (the A's as written in
+    # mlmtx.c are the transposes of the standard matrices, which is exactly
+    # what the row-vector convention looks like), so:
+    #   R_game = Rz(roll) @ Ry(yaw) @ Rx(pitch)
+    # Conjugating by the same coordinate change used everywhere else
+    # (arrange_mesh_data's x,-z,y), with Conv@Rx(t)@Conv^-1=Rx(t),
+    # Conv@Ry(t)@Conv^-1=Rz(t), Conv@Rz(t)@Conv^-1=Ry(-t):
+    #   R_blender = Ry(-roll) @ Rz(yaw) @ Rx(pitch)
+    #
+    # This order was previously reversed. That passed its check because it was
+    # validated against a reference frame of "Bsstand Idle", whose angles are
+    # small - and Euler composition is nearly commutative for small angles, so
+    # both orders render almost identically there. Large-angle animations (a
+    # walk cycle's limb swings) are what actually separate them.
     R = (
-        Matrix.Rotation(pitch, 3, 'X') @
+        Matrix.Rotation(-roll, 3, 'Y') @
         Matrix.Rotation(yaw, 3, 'Z') @
-        Matrix.Rotation(-roll, 3, 'Y')
+        Matrix.Rotation(pitch, 3, 'X')
     )
 
     # scale (components 3/4/5) is always uniform/isotropic in every real
