@@ -198,6 +198,16 @@ class ModelBIN:
                     active_descriptor = cmd.parameters[1]
                     continue
 
+                if (cmd.command_name == "G_SETTILE"):
+                    # unlike G_SETTIMG this addresses a tile explicitly (params[4])
+                    # rather than whichever one is active
+                    tile = descriptor_array[cmd.parameters[4]]
+                    tile.T_clamp  = bool(cmd.parameters[6])
+                    tile.T_mirror = bool(cmd.parameters[7])
+                    tile.S_clamp  = bool(cmd.parameters[10])
+                    tile.S_mirror = bool(cmd.parameters[11])
+                    continue
+
                 if (cmd.command_name == "G_SETTIMG"):
                     # find the tex that corresponds to this address (and only update the descriptor if it was actual data)
                     potential_tex_idx = TexSeg.get_tex_ID_from_datasection_offset(cmd.parameters[3])
@@ -293,6 +303,7 @@ class ModelBIN:
         # normal instead of a color - flag it so the vertex-color write-out
         # can avoid misreading that data as color/alpha.
         matching_tri.lit = bool(geomode & Dicts.RSP_GEOMODE_FLAGS["G_LIGHTING"])
+        matching_tri.tex_extension = tile_descriptor.get_blender_extension()
         matching_tri.vtx_1.calc_transformed_UVs(tile_descriptor)
         matching_tri.vtx_2.calc_transformed_UVs(tile_descriptor)
         matching_tri.vtx_3.calc_transformed_UVs(tile_descriptor)
@@ -337,6 +348,12 @@ class ModelBIN:
             mat = BinjoMaterial(img_alias, coll_encoding)
             
             if mat not in self.mat_list:
+                # Blender keys materials by name and the export path parses that
+                # name back for collision type/SFX, so a texture used both clamped
+                # and wrapped can't be split into two materials without changing
+                # the naming scheme - take the mode of whichever tri opens the
+                # material, which covers the normal case of consistent use
+                mat.tex_extension = tri.tex_extension
                 mat.link_image_object(self.TexSeg)
                 self.mat_list.append(mat)
             tri.mat_index = self.mat_list.index(mat)
@@ -347,6 +364,7 @@ class BinjoMaterial:
         self.img_alias = img_alias
         self.coll_encoding = coll_encoding
         self.name = f"{img_alias}_{coll_encoding}"
+        self.tex_extension = 'REPEAT'
     
     def link_image_object(self, TexSeg):
         if (self.img_alias == "INVIS"):
