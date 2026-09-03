@@ -77,12 +77,17 @@ class ModelBIN_GeoSeg:
         # see the LOD handling below for why these need excluding entirely,
         # not just left bone-untagged (build_complete_tri_list skips them).
         self.excluded_dl_indices = set()
+        # DL index -> tag of the SELECTOR variant it belongs to. Unlike the LOD
+        # alternates above these are not redundant copies but genuinely
+        # different content, so they're kept and split off into their own
+        # objects instead of being thrown away.
+        self.variant_dl_indices = {}
         self._walk(file_data, file_offset, [])
         print(f"parsed GeoLayout: {len(self.dl_bone_assignments)} bone-tagged DisplayList sections.")
         self.valid = True
         return
 
-    def _walk(self, file_data, offset, bone_stack, is_excluded=False):
+    def _walk(self, file_data, offset, bone_stack, is_excluded=False, variant_key=None):
         # LOD (0x08) commands can appear as consecutive SIBLINGS in the same
         # flat chain, each with its own single sub-chain - confirmed against
         # this specific ROM's data: there is exactly ONE such pair in the
@@ -114,7 +119,7 @@ class ModelBIN_GeoSeg:
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x08, 1)
                 bone_idx   = binjo_utils.read_bytes(file_data, offset + 0x09, 1, type="signed")
                 if (sub_offset != 0):
-                    self._walk(file_data, offset + sub_offset, bone_stack + [bone_idx], is_excluded)
+                    self._walk(file_data, offset + sub_offset, bone_stack + [bone_idx], is_excluded, variant_key)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["LOAD_DL"]):
                 dl_idx = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
@@ -122,6 +127,8 @@ class ModelBIN_GeoSeg:
                     self.excluded_dl_indices.add(dl_idx)
                 else:
                     self.dl_bone_assignments[dl_idx] = active_bone
+                    if (variant_key is not None):
+                        self.variant_dl_indices[dl_idx] = variant_key
 
             elif (cmd_0 == 0x07):
                 dl_idx = binjo_utils.read_bytes(file_data, offset + 0x0A, 2)
@@ -129,6 +136,8 @@ class ModelBIN_GeoSeg:
                     self.excluded_dl_indices.add(dl_idx)
                 else:
                     self.dl_bone_assignments[dl_idx] = active_bone
+                    if (variant_key is not None):
+                        self.variant_dl_indices[dl_idx] = variant_key
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["SKINNING"]):
                 dl_idx = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
@@ -136,6 +145,8 @@ class ModelBIN_GeoSeg:
                     self.excluded_dl_indices.add(dl_idx)
                 else:
                     self.dl_bone_assignments[dl_idx] = active_bone
+                    if (variant_key is not None):
+                        self.variant_dl_indices[dl_idx] = variant_key
                 idx = 1
                 while True:
                     extra_dl_idx = binjo_utils.read_bytes(file_data, offset + 0x08 + (idx * 2), 2)
@@ -147,25 +158,27 @@ class ModelBIN_GeoSeg:
                         self.excluded_dl_indices.add(extra_dl_idx)
                     else:
                         self.dl_bone_assignments[extra_dl_idx] = active_bone
+                        if (variant_key is not None):
+                            self.variant_dl_indices[extra_dl_idx] = variant_key
                     idx += 1
 
             elif (cmd_0 == 0x00):
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x08, 2, type="signed")
                 if (sub_offset != 0):
-                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded)
+                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded, variant_key)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["SORT"]):
                 sub_offset_A = binjo_utils.read_bytes(file_data, offset + 0x22, 2, type="signed")
                 sub_offset_B = binjo_utils.read_bytes(file_data, offset + 0x24, 4, type="signed")
                 if (sub_offset_A != 0):
-                    self._walk(file_data, offset + sub_offset_A, bone_stack, is_excluded)
+                    self._walk(file_data, offset + sub_offset_A, bone_stack, is_excluded, variant_key)
                 if (sub_offset_B != 0):
-                    self._walk(file_data, offset + sub_offset_B, bone_stack, is_excluded)
+                    self._walk(file_data, offset + sub_offset_B, bone_stack, is_excluded, variant_key)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["BRANCH"]):
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x08, 4, type="signed")
                 if (sub_offset != 0):
-                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded)
+                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded, variant_key)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["LOD"]):
                 # confirmed against the decomp (func_80338B50, "Cmd8_LOD",
@@ -198,7 +211,7 @@ class ModelBIN_GeoSeg:
 
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x1C, 4, type="signed")
                 if (sub_offset != 0):
-                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded or (offset != lod_winner_offset))
+                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded or (offset != lod_winner_offset), variant_key)
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["SELECTOR"]):
                 # SELECTOR is a model-SWAP, not a group: confirmed against the
@@ -207,15 +220,20 @@ class ModelBIN_GeoSeg:
                 # draws exactly ONE child (state-1), or none (state 0), or a
                 # bitmask-selected subset (negative state) - never all of them.
                 # Its children are alternate appearances of the same piece
-                # (e.g. the 8 eye states of a character head), so walking them
-                # all stacks every variant in the same place. A static import
-                # has no runtime state, so take the first child as the default
-                # appearance and exclude the alternates.
+                # (the 8 eye states of a character head, Kazooie's bare feet vs
+                # her Turbo Trainers), so walking them all stacks every variant
+                # in the same place. A static import has no runtime state, so
+                # the first child is taken as the default appearance; the rest
+                # are still real content, so they're tagged rather than dropped
+                # and get built into their own hidden objects further down.
                 child_cnt = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
+                selector_id = binjo_utils.read_bytes(file_data, offset + 0x0A, 2)
                 for idx in range(0, child_cnt):
                     child_offset = binjo_utils.read_bytes(file_data, offset + 0x0C + (idx * 4), 4, type="signed")
                     if (child_offset != 0):
-                        self._walk(file_data, offset + child_offset, bone_stack, is_excluded or (idx > 0))
+                        # a nested selector inside a variant keeps the outer tag
+                        child_key = variant_key if (idx == 0) else f"sel{selector_id}_{idx}"
+                        self._walk(file_data, offset + child_offset, bone_stack, is_excluded, child_key)
 
             # every other command (unknown/opaque or purely cosmetic, e.g.
             # DRAW_DISTANCE, REFERENCE_POINT) has no sub-chain to recurse into

@@ -923,6 +923,58 @@ def remove_orphan_loose_vertices(mesh_obj):
     mesh.update()
 
 
+# Builds one Blender object out of a subset of the model's tris. Every object
+# is given the FULL vertex list so that raw vertex indices keep matching the
+# ones the bone/pinning tables use; the vertices no face refers to are dropped
+# afterwards by remove_orphan_loose_vertices. The material list is likewise
+# shared whole, so tri.mat_index stays valid across every object.
+def build_mesh_object_from_tris(name, tri_list, vertices, blender_materials, highlight_invis):
+    mesh = bpy.data.meshes.new(f"{name}_Mesh")
+    obj = bpy.data.objects.new(name, mesh)
+    mesh.from_pydata(vertices, [], [(t.index_1, t.index_2, t.index_3) for t in tri_list])
+
+    UV_layer = obj.data.uv_layers.new(name="import_UV")
+    col_attr = mesh.attributes.new(name='import_Color', domain='CORNER', type='BYTE_COLOR')
+    for mat in blender_materials:
+        obj.data.materials.append(mat)
+
+    for (face, tri) in zip(mesh.polygons, tri_list):
+        # set material index of the face according to the data within tri
+        face.material_index = tri.mat_index
+        # and set the UV coords of the face through the loop indices
+        UV_layer.data[face.loop_indices[0]].uv = (tri.vtx_1.transformed_U, tri.vtx_1.transformed_V)
+        UV_layer.data[face.loop_indices[1]].uv = (tri.vtx_2.transformed_U, tri.vtx_2.transformed_V)
+        UV_layer.data[face.loop_indices[2]].uv = (tri.vtx_3.transformed_U, tri.vtx_3.transformed_V)
+
+        # aswell as the RGBA shades
+        if ("INVIS" in obj.data.materials[face.material_index].name):
+            # if the toggle is active
+            if (highlight_invis):
+                # pure collision tris will be drawn in magenta
+                shade = (1.0, 0, 1.0, 1.0)
+            else:
+                # otherwise make them gray and fully transparent
+                shade = (0.7, 0.7, 0.7, 0.0)
+            col_attr.data[face.loop_indices[0]].color = shade
+            col_attr.data[face.loop_indices[1]].color = shade
+            col_attr.data[face.loop_indices[2]].color = shade
+        elif (tri.lit):
+            # G_LIGHTING geometry repurposes these bytes as a packed
+            # vertex normal instead of vertex color - force full white
+            # so Base Color is driven by the texture alone instead of
+            # being multiplied by that data misread as color/alpha.
+            col_attr.data[face.loop_indices[0]].color = (1.0, 1.0, 1.0, 1.0)
+            col_attr.data[face.loop_indices[1]].color = (1.0, 1.0, 1.0, 1.0)
+            col_attr.data[face.loop_indices[2]].color = (1.0, 1.0, 1.0, 1.0)
+        else:
+            # others get their vertex RGBA values assigned (regardless of textured or not)
+            col_attr.data[face.loop_indices[0]].color = (tri.vtx_1.r/255, tri.vtx_1.g/255, tri.vtx_1.b/255, tri.vtx_1.a/255)
+            col_attr.data[face.loop_indices[1]].color = (tri.vtx_2.r/255, tri.vtx_2.g/255, tri.vtx_2.b/255, tri.vtx_2.a/255)
+            col_attr.data[face.loop_indices[2]].color = (tri.vtx_3.r/255, tri.vtx_3.g/255, tri.vtx_3.b/255, tri.vtx_3.a/255)
+
+    return obj
+
+
 class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
     # this OP is hidden - used by the others
     bl_label = ""
@@ -935,27 +987,14 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
         import_timer_start = timer()
 
         print("Creating new Object...")
-        # setting up a new mesh for the scene
-        new_mesh = bpy.data.meshes.new("import_Mesh")
-        new_obj = bpy.data.objects.new("import_Object", new_mesh)
 
         # this line essentially just divides every coord by the scale factor through a nested list-comprehension
         vertices    = [[(coord / context.scene.binjo_props.scale_factor) for coord in coordlist] for coordlist in bin_handler.model_object.vertex_coord_list]
-        edges       = []
-        faces       = bin_handler.model_object.face_idx_list
-        new_mesh.from_pydata(vertices, edges, faces)
-
-        # create over-arching layer/attribute elements
-        UV_layer = new_obj.data.uv_layers.new(name="import_UV")
-        col_attr = new_mesh.attributes.new(
-            name='import_Color',
-            domain='CORNER',
-            type='BYTE_COLOR'
-        )
 
         # now create actual materials from the mat-names (reuse an existing
         # datablock if this model was already imported before, so repeated
         # imports don't pile up NAME.001, NAME.002, ... duplicates)
+        blender_materials = []
         for binjo_mat in bin_handler.model_object.mat_list:
 
             mat = bpy.data.materials.get(binjo_mat.name) or bpy.data.materials.new(binjo_mat.name)
@@ -986,62 +1025,69 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             mat["Collision_SFX"] = ModelBIN_ColSeg.get_SFX_from_mat_name(mat.name)
 
             # and add it to the mat-list
-            new_obj.data.materials.append(mat)
+            blender_materials.append(mat)
 
-        for (face, tri) in zip(new_mesh.polygons, bin_handler.model_object.complete_tri_list):
-            # set material index of the face according to the data within tri
-            face.material_index = tri.mat_index
-            # and set the UV coords of the face through the loop indices
-            UV_layer.data[face.loop_indices[0]].uv = (tri.vtx_1.transformed_U, tri.vtx_1.transformed_V)
-            UV_layer.data[face.loop_indices[1]].uv = (tri.vtx_2.transformed_U, tri.vtx_2.transformed_V)
-            UV_layer.data[face.loop_indices[2]].uv = (tri.vtx_3.transformed_U, tri.vtx_3.transformed_V)
-            
-            # aswell as the RGBA shades
-            if ("INVIS" in new_obj.data.materials[face.material_index].name):
-                # if the toggle is active
-                if (context.scene.binjo_props.highlight_invis):
-                    # pure collision tris will be drawn in magenta
-                    col_attr.data[face.loop_indices[0]].color = (1.0, 0, 1.0, 1.0)
-                    col_attr.data[face.loop_indices[1]].color = (1.0, 0, 1.0, 1.0)
-                    col_attr.data[face.loop_indices[2]].color = (1.0, 0, 1.0, 1.0)
-                else:
-                    # otherwise make them gray and fully transparent
-                    col_attr.data[face.loop_indices[0]].color = (0.7, 0.7, 0.7, 0.0)
-                    col_attr.data[face.loop_indices[1]].color = (0.7, 0.7, 0.7, 0.0)
-                    col_attr.data[face.loop_indices[2]].color = (0.7, 0.7, 0.7, 0.0)
-            elif (tri.lit):
-                # G_LIGHTING geometry repurposes these bytes as a packed
-                # vertex normal instead of vertex color - force full white
-                # so Base Color is driven by the texture alone instead of
-                # being multiplied by that data misread as color/alpha.
-                col_attr.data[face.loop_indices[0]].color = (1.0, 1.0, 1.0, 1.0)
-                col_attr.data[face.loop_indices[1]].color = (1.0, 1.0, 1.0, 1.0)
-                col_attr.data[face.loop_indices[2]].color = (1.0, 1.0, 1.0, 1.0)
-            else:
-                # others get their vertex RGBA values assigned (regardless of textured or not)
-                col_attr.data[face.loop_indices[0]].color = (tri.vtx_1.r/255, tri.vtx_1.g/255, tri.vtx_1.b/255, tri.vtx_1.a/255)
-                col_attr.data[face.loop_indices[1]].color = (tri.vtx_2.r/255, tri.vtx_2.g/255, tri.vtx_2.b/255, tri.vtx_2.a/255)
-                col_attr.data[face.loop_indices[2]].color = (tri.vtx_3.r/255, tri.vtx_3.g/255, tri.vtx_3.b/255, tri.vtx_3.a/255)
+        # SELECTOR variants (Kazooie's Turbo Trainers over her bare feet, the
+        # alternate eye states of a head) are never drawn at the same time as
+        # the default appearance, so each becomes its own object in a hidden
+        # collection rather than being stacked into the main mesh or dropped
+        tris_by_variant = {}
+        for tri in bin_handler.model_object.complete_tri_list:
+            tris_by_variant.setdefault(tri.variant, []).append(tri)
 
+        highlight_invis = context.scene.binjo_props.highlight_invis
+        new_obj = build_mesh_object_from_tris(
+            "import_Object", tris_by_variant.get(None, []),
+            vertices, blender_materials, highlight_invis
+        )
         scene.collection.objects.link(new_obj)
+
+        variant_objs = []
+        variant_keys = sorted(key for key in tris_by_variant if key is not None)
+        if (variant_keys):
+            variant_coll = bpy.data.collections.new("import_Variants")
+            scene.collection.children.link(variant_coll)
+            for key in variant_keys:
+                variant_obj = build_mesh_object_from_tris(
+                    f"import_{key}", tris_by_variant[key],
+                    vertices, blender_materials, highlight_invis
+                )
+                variant_coll.objects.link(variant_obj)
+                variant_objs.append(variant_obj)
+            # the default appearance is what the game shows, so the alternates
+            # stay out of the way until they're wanted. Hide via the LAYER
+            # collection (the eye) rather than collection.hide_viewport (the
+            # monitor icon), because the Outliner only shows the monitor toggle
+            # once it's switched on in the filter dropdown - the eye is there
+            # by default, so the alternates can actually be found and toggled.
+            layer_coll = context.view_layer.layer_collection.children.get(variant_coll.name)
+            if (layer_coll is not None):
+                layer_coll.hide_viewport = True
+            variant_coll.hide_render = True
+            print(f"split off {len(variant_objs)} SELECTOR variant(s) into 'import_Variants' (hidden)")
 
         if (bin_handler.model_object.BoneSeg.valid):
             armature_obj = build_armature_from_bones(bin_handler.model_object.BoneSeg, context.scene.binjo_props.scale_factor)
-            assign_vertex_groups_from_bones(
-                new_obj,
-                armature_obj,
-                bin_handler.model_object.BoneSeg,
-                bin_handler.model_object.vertex_bone_assignments
-            )
-            apply_vertex_pinning(
-                new_obj,
-                armature_obj,
-                bin_handler.model_object.BoneSeg,
-                bin_handler.model_object.Unk28Seg,
-                context.scene.binjo_props.scale_factor
-            )
+            # variants are skinned to the same bones as the geometry they
+            # replace, so they need the same treatment as the main mesh
+            for obj in ([new_obj] + variant_objs):
+                assign_vertex_groups_from_bones(
+                    obj,
+                    armature_obj,
+                    bin_handler.model_object.BoneSeg,
+                    bin_handler.model_object.vertex_bone_assignments
+                )
+                apply_vertex_pinning(
+                    obj,
+                    armature_obj,
+                    bin_handler.model_object.BoneSeg,
+                    bin_handler.model_object.Unk28Seg,
+                    context.scene.binjo_props.scale_factor
+                )
 
-        remove_orphan_loose_vertices(new_obj)
+        for obj in ([new_obj] + variant_objs):
+            remove_orphan_loose_vertices(obj)
+
 
         # just some names to check if neccessary
         print([e.name for e in bpy.data.materials[0].node_tree.nodes["Principled BSDF"].inputs])
