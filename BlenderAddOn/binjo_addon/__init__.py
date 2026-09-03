@@ -963,6 +963,8 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             # assign the parsed Tex after defaulting the mat
             tex_node = mat.node_tree.nodes["TEX"]
             tex_node.image = binjo_mat.Blender_IMG
+            # untextured mats have to bypass the mixers, see apply_texture_bypass
+            apply_texture_bypass(mat)
             if (tex_node.image is not None):
                 if (not os.path.isdir(context.scene.binjo_props.export_path)):
                     self.report({'WARNING'}, "Export Path is not set to a viable Directory - Not saving tmp Images...")
@@ -1003,6 +1005,14 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
                     col_attr.data[face.loop_indices[0]].color = (0.7, 0.7, 0.7, 0.0)
                     col_attr.data[face.loop_indices[1]].color = (0.7, 0.7, 0.7, 0.0)
                     col_attr.data[face.loop_indices[2]].color = (0.7, 0.7, 0.7, 0.0)
+            elif (tri.lit):
+                # G_LIGHTING geometry repurposes these bytes as a packed
+                # vertex normal instead of vertex color - force full white
+                # so Base Color is driven by the texture alone instead of
+                # being multiplied by that data misread as color/alpha.
+                col_attr.data[face.loop_indices[0]].color = (1.0, 1.0, 1.0, 1.0)
+                col_attr.data[face.loop_indices[1]].color = (1.0, 1.0, 1.0, 1.0)
+                col_attr.data[face.loop_indices[2]].color = (1.0, 1.0, 1.0, 1.0)
             else:
                 # others get their vertex RGBA values assigned (regardless of textured or not)
                 col_attr.data[face.loop_indices[0]].color = (tri.vtx_1.r/255, tri.vtx_1.g/255, tri.vtx_1.b/255, tri.vtx_1.a/255)
@@ -1615,6 +1625,36 @@ class BINJO_OT_copy_selected_shade(bpy.types.Operator):
 
 
 
+# An Image Texture node with no image assigned outputs black with alpha 0, so
+# multiplying it into Base Color/Alpha (as a textured material does) turns an
+# untextured material black and fully invisible. BK draws plenty of geometry
+# from vertex colour alone - the combiner ignores the texture there, and the
+# vertices carry no usable S/T - so those materials have to take colour and
+# alpha straight from the vertex-colour node instead of through the mixers.
+# Call after assigning (or clearing) the TEX node's image.
+def apply_texture_bypass(mat):
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    tex_node = nodes.get("TEX")
+    color_node = nodes.get("RGBA")
+    principled = nodes.get("Principled BSDF")
+    mix_color = nodes.get("COLOR_MIX")
+    mix_alpha = nodes.get("ALPHA_MIX")
+    if (tex_node is None or color_node is None or principled is None):
+        return
+
+    if (tex_node.image is None):
+        links.new(color_node.outputs["Color"], principled.inputs["Base Color"])
+        links.new(color_node.outputs["Alpha"], principled.inputs["Alpha"])
+        return
+
+    # textured again (e.g. an image got re-assigned): restore the mixers
+    if (mix_color is not None):
+        links.new(mix_color.outputs["Color"], principled.inputs["Base Color"])
+    if (mix_alpha is not None):
+        links.new(mix_alpha.outputs["Color"], principled.inputs["Alpha"])
+
+
 def set_mat_to_default(mat):
     # first, retain (potential) old images, and remove old nodes
     # pulled from BBMat4.1
@@ -1662,6 +1702,7 @@ def set_mat_to_default(mat):
 
     # mixer-node (texture * RGB)                  
     mix_node_1 = mat.node_tree.nodes.new("ShaderNodeMixRGB")
+    mix_node_1.name = "COLOR_MIX"
     mix_node_1.blend_type = "MULTIPLY"
     mix_node_1.location = (-275, +300)
     mix_node_1.inputs["Fac"].default_value = 1.0
@@ -1672,8 +1713,24 @@ def set_mat_to_default(mat):
     # link mixer to base-color input in main-material node
     mat.node_tree.links.new(mix_node_1.outputs["Color"], mat.node_tree.nodes[0].inputs["Base Color"])
     
-    # and link color node's alpha output to mat alpha input
-    mat.node_tree.links.new(color_node.outputs["Alpha"], mat.node_tree.nodes[0].inputs["Alpha"])
+    # final alpha = texture alpha * vertex alpha (mirrors the Base Color
+    # mixer above): using ONLY the vertex color's alpha ignored the
+    # texture's own per-texel alpha entirely, so any texture that uses
+    # alpha=0 to mask out part of its texel grid (e.g. a small round eye/
+    # pupil texture meant to show the fur behind it everywhere outside the
+    # circle) rendered as fully OPAQUE using its raw (often black) RGB in
+    # the "transparent" texels instead - a small eye texture covering most
+    # of the face in solid black instead of leaving the fur visible around it
+    mix_node_alpha = mat.node_tree.nodes.new("ShaderNodeMixRGB")
+    mix_node_alpha.name = "ALPHA_MIX"
+    mix_node_alpha.blend_type = "MULTIPLY"
+    mix_node_alpha.location = (-275, -150)
+    mix_node_alpha.inputs["Fac"].default_value = 1.0
+    mat.node_tree.links.new(tex_node.outputs["Alpha"], mix_node_alpha.inputs["Color1"])
+    mat.node_tree.links.new(color_node.outputs["Alpha"], mix_node_alpha.inputs["Color2"])
+    mat.node_tree.links.new(mix_node_alpha.outputs["Color"], mat.node_tree.nodes[0].inputs["Alpha"])
+
+    apply_texture_bypass(mat)
 
     mat["Collision_Disabled"] = False
     mat["Visibility_Disabled"] = False

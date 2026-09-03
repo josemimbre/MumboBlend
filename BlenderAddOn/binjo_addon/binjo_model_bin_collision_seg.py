@@ -269,6 +269,7 @@ class ModelBIN_TriElem:
         self.collision_type = binjo_utils.read_bytes(file_data, file_offset + 0x08, 4)
         self.tex_idx        = None
         self.visible        = False
+        self.lit            = False
         return
 
     def get_bytes(self):
@@ -289,6 +290,7 @@ class ModelBIN_TriElem:
         self.collision_type = coll_type
         self.tex_idx        = tex_id
         self.visible        = (tex_id is not None)
+        self.lit            = False
         return
 
     # link the VTX objects in the given VTX-list to the TRI objects in our tri-list via their indices
