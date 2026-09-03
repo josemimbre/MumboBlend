@@ -963,6 +963,10 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             # assign the parsed Tex after defaulting the mat
             tex_node = mat.node_tree.nodes["TEX"]
             tex_node.image = binjo_mat.Blender_IMG
+            # RDP clamp/mirror flags of the tile this material was drawn with -
+            # leaving Blender's default REPEAT tiles the texture over any face
+            # whose UVs run past [0,1]
+            tex_node.extension = binjo_mat.tex_extension
             # untextured mats have to bypass the mixers, see apply_texture_bypass
             apply_texture_bypass(mat)
             if (tex_node.image is not None):

@@ -399,6 +399,19 @@ class TileDescriptor:
         self.tex_width = 0
         self.tex_height = 0
 
+    # Blender's Image Texture node carries ONE extension mode for both axes,
+    # while the RDP sets clamp/mirror per axis, so this has to collapse the
+    # pair. EXTEND wins over REPEAT whenever either axis clamps: leaving a
+    # clamped tile on Blender's default REPEAT tiles the texture across any
+    # face whose UVs run past [0,1], which is what draws a small texture (an
+    # eye, say) several times over on a single polygon.
+    def get_blender_extension(self):
+        if (self.S_mirror or self.T_mirror):
+            return 'MIRROR'
+        if (self.S_clamp or self.T_clamp):
+            return 'EXTEND'
+        return 'REPEAT'
+
 
 
 class ModelBIN_DLSeg:
