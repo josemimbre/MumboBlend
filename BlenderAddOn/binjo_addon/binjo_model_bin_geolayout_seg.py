@@ -58,11 +58,13 @@ class ModelBIN_GeoSeg:
     # approximation, since the exact sequential-matrix-cursor semantics
     # aren't fully resolved yet).
     #
-    # Branching-but-not-bone-related commands (billboard, sort, branch, LOD,
-    # selector) are all descended into unconditionally, since this is a
-    # static, ROM-wide analysis rather than a runtime trace with a single
-    # active branch - visiting every possible branch is what we want so no
-    # DL index is missed.
+    # Branching-but-not-bone-related commands (billboard, sort, branch) are
+    # descended into unconditionally, since this is a static, ROM-wide
+    # analysis rather than a runtime trace - visiting every branch is what we
+    # want so no DL index is missed. The two exceptions are LOD (0x08) and
+    # SELECTOR (0x0C), whose branches are mutually exclusive at runtime:
+    # walking all of them stacks alternate versions of the same geometry in
+    # the same place, so the losing branches go into excluded_dl_indices.
     def populate_from_data(self, file_data, file_offset):
         if file_offset == 0:
             print("No GeoLayout Segment")
@@ -92,18 +94,17 @@ class ModelBIN_GeoSeg:
         # the two copies' triangles didn't line up exactly - almost
         # certainly near/far detail-level variants of the whole model,
         # picked at runtime by a distance check this static data doesn't
-        # encode). Unlike SELECTOR, LOD has no explicit "choose 1 of N"
-        # field - it's just sibling commands - so there's no way to
-        # generalize this beyond "first LOD sibling in a chain wins, treat
-        # later ones as excluded alternates", which held up here because
-        # this file has only one such pair, isolated (nothing else shares
-        # its parent chain). An earlier, broader attempt at excluding
-        # non-first SELECTOR branches too caused a real regression (an
-        # unrelated bone absorbing content from a branch it did need) and
-        # was reverted; this LOD-only version does not touch SELECTOR at
-        # all, since SELECTOR branches are NOT confirmed to be mutually
-        # exclusive the way this LOD pair specifically is.
-        seen_lod_sibling = False
+        # encode). LOD has no explicit "choose 1 of N" field - it's just
+        # sibling commands - so the winner is picked by threshold instead
+        # (smallest min_C = nearest/highest detail), see the handler below.
+        #
+        # lod_run_offsets holds the sibling run whose winner is currently
+        # cached in lod_winner_offset. A chain can hold SEVERAL independent
+        # LOD runs, so the scan re-runs whenever a LOD command outside the
+        # cached run shows up; caching one winner per _walk instead would
+        # exclude every sibling of the second and later runs.
+        lod_run_offsets = set()
+        lod_winner_offset = None
         while True:
             cmd_0 = binjo_utils.read_bytes(file_data, offset + 0x00, 4)
             size_4 = binjo_utils.read_bytes(file_data, offset + 0x04, 4)
@@ -178,13 +179,15 @@ class ModelBIN_GeoSeg:
                 # [0, 670], with the second covering [670, 10000] - but
                 # that's this file's authoring order, not a format
                 # guarantee, so pick by threshold instead of position)
-                if (not seen_lod_sibling):
+                if (offset not in lod_run_offsets):
                     run_offset = offset
+                    lod_run_offsets = set()
                     best_min_c, lod_winner_offset = None, None
                     while True:
                         run_cmd_0 = binjo_utils.read_bytes(file_data, run_offset + 0x00, 4)
                         if (run_cmd_0 != Dicts.GEO_CMD_NAMES["LOD"]):
                             break
+                        lod_run_offsets.add(run_offset)
                         run_min_c = binjo_utils.read_float(file_data, run_offset + 0x0C)
                         if (best_min_c is None or run_min_c < best_min_c):
                             best_min_c, lod_winner_offset = run_min_c, run_offset
@@ -196,14 +199,23 @@ class ModelBIN_GeoSeg:
                 sub_offset = binjo_utils.read_bytes(file_data, offset + 0x1C, 4, type="signed")
                 if (sub_offset != 0):
                     self._walk(file_data, offset + sub_offset, bone_stack, is_excluded or (offset != lod_winner_offset))
-                seen_lod_sibling = True
 
             elif (cmd_0 == Dicts.GEO_CMD_NAMES["SELECTOR"]):
+                # SELECTOR is a model-SWAP, not a group: confirmed against the
+                # decomp (func_80338CD0, "CmdC_SELECTOR", modelRender.c). It
+                # reads a runtime state indexed by the selector ID at +0x0A and
+                # draws exactly ONE child (state-1), or none (state 0), or a
+                # bitmask-selected subset (negative state) - never all of them.
+                # Its children are alternate appearances of the same piece
+                # (e.g. the 8 eye states of a character head), so walking them
+                # all stacks every variant in the same place. A static import
+                # has no runtime state, so take the first child as the default
+                # appearance and exclude the alternates.
                 child_cnt = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
                 for idx in range(0, child_cnt):
                     child_offset = binjo_utils.read_bytes(file_data, offset + 0x0C + (idx * 4), 4, type="signed")
                     if (child_offset != 0):
-                        self._walk(file_data, offset + child_offset, bone_stack, is_excluded)
+                        self._walk(file_data, offset + child_offset, bone_stack, is_excluded or (idx > 0))
 
             # every other command (unknown/opaque or purely cosmetic, e.g.
             # DRAW_DISTANCE, REFERENCE_POINT) has no sub-chain to recurse into

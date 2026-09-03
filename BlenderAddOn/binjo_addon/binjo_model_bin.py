@@ -1,5 +1,6 @@
 
 from . import binjo_utils
+from . binjo_dicts import Dicts
 from . binjo_model_bin_header import ModelBIN_Header
 from . binjo_model_bin_texture_seg import ModelBIN_TexSeg
 from . binjo_model_bin_vertex_seg import ModelBIN_VtxSeg
@@ -153,6 +154,16 @@ class ModelBIN:
             # walk of the DL - so one pass tracking "whichever switch point we most
             # recently passed" is enough, no need to jump around per bone.
             active_bone = None
+            # RSP geometry-mode bitmask, updated by G_SETGEOMETRYMODE/G_CLEARGEOMETRYMODE
+            # as we walk the DL - needed to tell G_LIGHTING tris apart from
+            # G_SHADE ones, since both reuse the same 4 per-vertex bytes for
+            # completely different data (see add_and_transform_tri).
+            # Starts with G_LIGHTING assumed ON: the engine appears to set
+            # this globally before running a model's DL, and most sections
+            # only ever explicitly CLEAR it (to opt into flat vertex-color)
+            # rather than explicitly SET it - starting at 0 left every
+            # section that never touches the flag mis-tagged as unlit.
+            active_geomode = Dicts.RSP_GEOMODE_FLAGS["G_LIGHTING"]
             # like active_bone, "are we currently inside an excluded chunk"
             # has to PERSIST across the in-between command indices between
             # one GeoLayout marker (LOAD_DL/SKINNING/0x07) and the next -
@@ -175,6 +186,14 @@ class ModelBIN:
                 if (currently_excluded):
                     continue
 
+                if (cmd.command_name == "G_SETGEOMETRYMODE"):
+                    active_geomode |= cmd.parameters[0]
+                    continue
+
+                if (cmd.command_name == "G_CLEARGEOMETRYMODE"):
+                    active_geomode &= ~cmd.parameters[0]
+                    continue
+
                 if (cmd.command_name == "G_TEXTURE"):
                     active_descriptor = cmd.parameters[1]
                     continue
@@ -187,10 +206,13 @@ class ModelBIN:
                         descriptor_array[active_descriptor].tex_width  = TexSeg.tex_elements[descriptor_array[active_descriptor].tex_idx].width
                         descriptor_array[active_descriptor].tex_height = TexSeg.tex_elements[descriptor_array[active_descriptor].tex_idx].height
                     else:
-                        pass
-                        # descriptor_array[active_descriptor].tex_idx = None
-                        # descriptor_array[active_descriptor].tex_width  = 0
-                        # descriptor_array[active_descriptor].tex_height = 0
+                        # address matches no known texture - clear the descriptor rather
+                        # than silently keeping whatever was loaded into this slot before,
+                        # which would paint the tris drawn after this point with an
+                        # unrelated, stale texture
+                        descriptor_array[active_descriptor].tex_idx = None
+                        descriptor_array[active_descriptor].tex_width  = 0
+                        descriptor_array[active_descriptor].tex_height = 0
                     continue
                 
                 if (cmd.command_name == "G_VTX"):
@@ -210,7 +232,7 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor])
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode)
                     continue
 
                 if (cmd.command_name == "G_TRI2"):
@@ -220,21 +242,21 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor])
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode)
                     tmp_tri = ModelBIN_TriElem()
                     tmp_tri.build_from_parameters(
                         vertex_buffer[cmd.parameters[3]],
                         vertex_buffer[cmd.parameters[4]],
                         vertex_buffer[cmd.parameters[5]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor])
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode)
                     continue
 
     # this func figures out if the new DL-Segment tri is already part of the tri-list (from ColSeg), and if
     # so, applys all the visual information to this already existing tri instead of using the new one.
     # this is VERY slow unfortunately...
     # this func also needs the entire existing-tri list aswell as the vtx-seg, so its in the collection class...
-    def add_and_transform_tri(self, new_tri, tile_descriptor):
+    def add_and_transform_tri(self, new_tri, tile_descriptor, geomode):
         # first, check if the tri already exists in our list
         # matching_tri_index = -1
         # for idx, existing_tri in enumerate(self.complete_tri_list):
@@ -253,8 +275,24 @@ class ModelBIN:
             self.complete_tri_list.append(matching_tri)
         # this is ALWAYS true if the tri was found in the DLs; Textured or not
         matching_tri.visible = True
-        # finally, link the tex ID and calculate the Blender-UVs with the help of the descriptor
-        matching_tri.tex_idx = tile_descriptor.tex_idx
+        # finally, link the tex ID and calculate the Blender-UVs with the help of the descriptor.
+        # A tri whose three vertices carry IDENTICAL raw S/T can't sample a texture
+        # meaningfully - BK uses that (u = v = -32, i.e. exactly 0 after the half-texel
+        # offset) for geometry the combiner draws from shade/vertex-colour alone, leaving
+        # whatever texture happens to still sit in TMEM irrelevant. Without this the tri
+        # inherits that unrelated texture and gets painted in its (0,0) texel: a flat
+        # colour, or nothing at all when that texel is transparent.
+        if (
+            matching_tri.vtx_1.u == matching_tri.vtx_2.u == matching_tri.vtx_3.u and
+            matching_tri.vtx_1.v == matching_tri.vtx_2.v == matching_tri.vtx_3.v
+        ):
+            matching_tri.tex_idx = None
+        else:
+            matching_tri.tex_idx = tile_descriptor.tex_idx
+        # G_LIGHTING repurposes the per-vertex RGBA bytes as a packed vertex
+        # normal instead of a color - flag it so the vertex-color write-out
+        # can avoid misreading that data as color/alpha.
+        matching_tri.lit = bool(geomode & Dicts.RSP_GEOMODE_FLAGS["G_LIGHTING"])
         matching_tri.vtx_1.calc_transformed_UVs(tile_descriptor)
         matching_tri.vtx_2.calc_transformed_UVs(tile_descriptor)
         matching_tri.vtx_3.calc_transformed_UVs(tile_descriptor)

@@ -93,6 +93,14 @@ class ModelBIN_TexSeg:
         for idx, tex in enumerate(self.tex_elements):
             if (tex.datasection_offset_data == datasection_offset_data):
                 return idx
+            # CI-format textures get loaded into TMEM via TWO separate
+            # G_SETTIMG commands: one pointing at the palette (the tex's own
+            # datasection_offset_data), and one pointing at the texel/index
+            # data right after it - at +0x20 (CI4) or +0x200 (CI8) bytes in.
+            # Both refer to the same logical texture.
+            palette_size = Dicts.TEX_TYPE_PALETTE_SIZE.get(tex.tex_type, 0)
+            if (palette_size > 0 and (tex.datasection_offset_data + palette_size) == datasection_offset_data):
+                return idx
         return -1
 
 
