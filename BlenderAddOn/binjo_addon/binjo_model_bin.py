@@ -154,6 +154,7 @@ class ModelBIN:
             # walk of the DL - so one pass tracking "whichever switch point we most
             # recently passed" is enough, no need to jump around per bone.
             active_bone = None
+            active_variant = None
             # RSP geometry-mode bitmask, updated by G_SETGEOMETRYMODE/G_CLEARGEOMETRYMODE
             # as we walk the DL - needed to tell G_LIGHTING tris apart from
             # G_SHADE ones, since both reuse the same 4 per-vertex bytes for
@@ -179,6 +180,9 @@ class ModelBIN:
             for cmd_idx, cmd in enumerate(DLSeg.command_list):
                 if (GeoSeg.valid and cmd_idx in GeoSeg.dl_bone_assignments):
                     active_bone = GeoSeg.dl_bone_assignments[cmd_idx]
+                    # None for the default appearance, else the SELECTOR variant
+                    # this chunk was reached through
+                    active_variant = GeoSeg.variant_dl_indices.get(cmd_idx)
                     currently_excluded = False
                 elif (GeoSeg.valid and cmd_idx in GeoSeg.excluded_dl_indices):
                     currently_excluded = True
@@ -242,7 +246,7 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant)
                     continue
 
                 if (cmd.command_name == "G_TRI2"):
@@ -252,21 +256,21 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant)
                     tmp_tri = ModelBIN_TriElem()
                     tmp_tri.build_from_parameters(
                         vertex_buffer[cmd.parameters[3]],
                         vertex_buffer[cmd.parameters[4]],
                         vertex_buffer[cmd.parameters[5]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant)
                     continue
 
     # this func figures out if the new DL-Segment tri is already part of the tri-list (from ColSeg), and if
     # so, applys all the visual information to this already existing tri instead of using the new one.
     # this is VERY slow unfortunately...
     # this func also needs the entire existing-tri list aswell as the vtx-seg, so its in the collection class...
-    def add_and_transform_tri(self, new_tri, tile_descriptor, geomode):
+    def add_and_transform_tri(self, new_tri, tile_descriptor, geomode, variant=None):
         # first, check if the tri already exists in our list
         # matching_tri_index = -1
         # for idx, existing_tri in enumerate(self.complete_tri_list):
@@ -283,6 +287,11 @@ class ModelBIN:
             matching_tri = new_tri
             matching_tri.link_vertex_objects(self.VtxSeg.vtx_list)
             self.complete_tri_list.append(matching_tri)
+            matching_tri.variant = variant
+        elif (variant is None):
+            # reached again through the default appearance - that wins, so a tri
+            # shared between the default and a variant stays in the main mesh
+            matching_tri.variant = None
         # this is ALWAYS true if the tri was found in the DLs; Textured or not
         matching_tri.visible = True
         # finally, link the tex ID and calculate the Blender-UVs with the help of the descriptor.
