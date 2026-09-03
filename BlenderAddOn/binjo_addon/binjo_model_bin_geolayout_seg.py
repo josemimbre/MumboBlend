@@ -226,13 +226,29 @@ class ModelBIN_GeoSeg:
                 # the first child is taken as the default appearance; the rest
                 # are still real content, so they're tagged rather than dropped
                 # and get built into their own hidden objects further down.
+                # A SINGLE-child selector is a show/hide switch, not a choice:
+                # drawing its one child unconditionally would make the command
+                # pointless. Its runtime state starts at 0 ("draw nothing") and
+                # only specific moves raise it, so the resting appearance is
+                # HIDDEN. On Banjo (func_8029DD6C, code_16C60.c, switching on
+                # ASSET_34D/34E) these are exactly ids 9/10/11 - Kazooie's
+                # wings, her legs and the egg gear - fed straight from three
+                # booleans with no "+1", unlike the multi-child selectors right
+                # beside them. Those booleans are raised only by bFlap/bSwim,
+                # bTrot (Talon Trot) and bEggAss respectively, so during an
+                # ordinary walk or idle the game draws none of them.
+                # Multi-child selectors always land on some child, so their
+                # first one stays the default appearance.
                 child_cnt = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
                 selector_id = binjo_utils.read_bytes(file_data, offset + 0x0A, 2)
                 for idx in range(0, child_cnt):
                     child_offset = binjo_utils.read_bytes(file_data, offset + 0x0C + (idx * 4), 4, type="signed")
                     if (child_offset != 0):
-                        # a nested selector inside a variant keeps the outer tag
-                        child_key = variant_key if (idx == 0) else f"sel{selector_id}_{idx}"
+                        if (child_cnt == 1 or idx > 0):
+                            child_key = f"sel{selector_id}_{idx}"
+                        else:
+                            # a nested selector inside a variant keeps the outer tag
+                            child_key = variant_key
                         self._walk(file_data, offset + child_offset, bone_stack, is_excluded, child_key)
 
             # every other command (unknown/opaque or purely cosmetic, e.g.
