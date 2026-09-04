@@ -180,8 +180,14 @@ class ModelBIN_VtxElem:
             # scales them by the factor G_TEXTURE carries. That factor is 0.5 in
             # every model measured so far, which is why a single hardcoded /64
             # used to work - it was the two constants folded together.
-            self.transformed_U = (((self.u / 32.0) * tile_descriptor.S_scale) + tile_descriptor.S_shift + 0.5) / tile_descriptor.tex_width
-            self.transformed_V = (((self.v / 32.0) * tile_descriptor.T_scale) + tile_descriptor.T_shift + 0.5) / tile_descriptor.tex_height
+            #
+            # G_SETTILE's per-tile shift is deliberately NOT applied: it is a
+            # power-of-two SCALE (s >> shift), not the offset this used to add,
+            # and every G_SETTILE measured carries shift 0 on both axes, so
+            # there is no case to write it against. Implement it here if one
+            # ever turns up.
+            self.transformed_U = (((self.u / 32.0) * tile_descriptor.S_scale) + 0.5) / tile_descriptor.tex_width
+            self.transformed_V = (((self.v / 32.0) * tile_descriptor.T_scale) + 0.5) / tile_descriptor.tex_height
         else:
             self.transformed_U = ((self.u / 64.0) + 0 + 0.5) / 32.0
             self.transformed_V = ((self.v / 64.0) + 0 + 0.5) / 32.0

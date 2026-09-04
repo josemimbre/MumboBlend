@@ -63,6 +63,7 @@ class DisplayList_Command:
             self.parameters[3] = binjo_utils.apply_bitmask(self.lower, 0b_0000_0000_1111_1111_1111_0000_0000_0000) // 4 + 1
             # (Height - 1) * 4
             self.parameters[4] = binjo_utils.apply_bitmask(self.lower, 0b_0000_0000_0000_0000_0000_1111_1111_1111) // 4 + 1
+            return
 
         if self.command_name == "G_SetOtherMode_H":
             # shift
