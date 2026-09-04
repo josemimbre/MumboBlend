@@ -1021,6 +1021,23 @@ def build_mesh_object_from_tris(name, tri_list, vertices, blender_materials, hig
             col_attr.data[face.loop_indices[1]].color = (tri.vtx_2.r/255, tri.vtx_2.g/255, tri.vtx_2.b/255, tri.vtx_2.a/255)
             col_attr.data[face.loop_indices[2]].color = (tri.vtx_3.r/255, tri.vtx_3.g/255, tri.vtx_3.b/255, tri.vtx_3.a/255)
 
+    # G_LIGHTING tris carry a real vertex normal in the bytes the others use for
+    # colour, so those get imported as custom split normals. Everything else
+    # keeps the normal Blender computes from the face, which is what it would
+    # have used anyway - custom normals have to be supplied for EVERY loop or
+    # not at all, so the two are combined into one list here.
+    if (any(tri.lit for tri in tri_list)):
+        loop_normals = []
+        for (face, tri) in zip(mesh.polygons, tri_list):
+            if (tri.lit):
+                loop_normals.extend((tri.vtx_1.get_normal(), tri.vtx_2.get_normal(), tri.vtx_3.get_normal()))
+            else:
+                loop_normals.extend((face.normal, face.normal, face.normal))
+        # removed in 4.1, where custom normals are simply always honoured
+        if (bpy.app.version < (4, 1, 0)):
+            mesh.use_auto_smooth = True
+        mesh.normals_split_custom_set(loop_normals)
+
     return obj
 
 
@@ -1058,8 +1075,9 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             # from the RSP geometry mode of the chunk this material was drawn
             # with, rather than assuming every surface culls its back faces
             mat.use_backface_culling = binjo_mat.cull_backface
+            apply_texture_gen(mat, binjo_mat.tex_gen)
             # untextured mats have to bypass the mixers, see apply_texture_bypass
-            apply_texture_bypass(mat)
+            apply_texture_bypass(mat, binjo_mat.combiner)
             if (tex_node.image is not None):
                 if (not os.path.isdir(context.scene.binjo_props.export_path)):
                     self.report({'WARNING'}, "Export Path is not set to a viable Directory - Not saving tmp Images...")
@@ -1764,6 +1782,36 @@ class BINJO_OT_copy_selected_shade(bpy.types.Operator):
 
 
 
+# Under G_TEXTURE_GEN the RSP ignores the vertex's own S/T and derives the
+# texture coordinate from the vertex NORMAL instead - environment mapping, for
+# reflective surfaces. The UVs this addon bakes are therefore meaningless for
+# such a material, so the TEX node is driven from Texture Coordinate's Normal
+# output instead of the UV layer.
+#
+# Approximation: Normal gives a view-independent sphere/matcap style mapping,
+# which is what the RSP's own generation behaves like. Blender's Reflection
+# output would follow the camera, which the N64 does not do.
+def apply_texture_gen(mat, tex_gen):
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    tex_node = nodes.get("TEX")
+    if (tex_node is None):
+        return
+
+    coord_node = nodes.get("TEXGEN_COORD")
+    if (not tex_gen):
+        # a material rebuilt as non-generated drops back to plain UVs
+        if (coord_node is not None):
+            nodes.remove(coord_node)
+        return
+
+    if (coord_node is None):
+        coord_node = nodes.new("ShaderNodeTexCoord")
+        coord_node.name = "TEXGEN_COORD"
+        coord_node.location = (tex_node.location[0] - 200, tex_node.location[1])
+    links.new(coord_node.outputs["Normal"], tex_node.inputs["Vector"])
+
+
 # An Image Texture node with no image assigned outputs black with alpha 0, so
 # multiplying it into Base Color/Alpha (as a textured material does) turns an
 # untextured material black and fully invisible. BK draws plenty of geometry
@@ -1771,7 +1819,7 @@ class BINJO_OT_copy_selected_shade(bpy.types.Operator):
 # vertices carry no usable S/T - so those materials have to take colour and
 # alpha straight from the vertex-colour node instead of through the mixers.
 # Call after assigning (or clearing) the TEX node's image.
-def apply_texture_bypass(mat):
+def apply_texture_bypass(mat, combiner=0):
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     tex_node = nodes.get("TEX")
@@ -1785,6 +1833,15 @@ def apply_texture_bypass(mat):
     if (tex_node.image is None):
         links.new(color_node.outputs["Color"], principled.inputs["Base Color"])
         links.new(color_node.outputs["Alpha"], principled.inputs["Alpha"])
+        return
+
+    # One combiner in the whole measured set outputs the texel WITHOUT
+    # multiplying it by shade, so the vertex colour must not tint it. Alpha
+    # still comes from the mixer, since that one does keep TEXEL0_a * SHADE_a.
+    if (combiner == Dicts.COMBINER_TEXTURE_ONLY):
+        links.new(tex_node.outputs["Color"], principled.inputs["Base Color"])
+        if (mix_alpha is not None):
+            links.new(mix_alpha.outputs["Color"], principled.inputs["Alpha"])
         return
 
     # textured again (e.g. an image got re-assigned): restore the mixers

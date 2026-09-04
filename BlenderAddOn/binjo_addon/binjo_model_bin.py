@@ -157,6 +157,8 @@ class ModelBIN:
             active_variant = None
             # G_TEXTURE's enable bit: whether what follows is drawn textured at all
             texture_enabled = True
+            # colour-combiner word in force; see COMBINER_TEXTURE_ONLY
+            active_combiner = 0
             # RSP geometry-mode bitmask, updated by G_SETGEOMETRYMODE/G_CLEARGEOMETRYMODE
             # as we walk the DL - needed to tell G_LIGHTING tris apart from
             # G_SHADE ones, since both reuse the same 4 per-vertex bytes for
@@ -198,6 +200,10 @@ class ModelBIN:
 
                 if (cmd.command_name == "G_CLEARGEOMETRYMODE"):
                     active_geomode &= ~cmd.parameters[0]
+                    continue
+
+                if (cmd.command_name == "G_SETCOMBINE"):
+                    active_combiner = cmd.full
                     continue
 
                 if (cmd.command_name == "G_TEXTURE"):
@@ -251,7 +257,7 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled, active_combiner)
                     continue
 
                 if (cmd.command_name == "G_TRI2"):
@@ -261,21 +267,21 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled, active_combiner)
                     tmp_tri = ModelBIN_TriElem()
                     tmp_tri.build_from_parameters(
                         vertex_buffer[cmd.parameters[3]],
                         vertex_buffer[cmd.parameters[4]],
                         vertex_buffer[cmd.parameters[5]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled, active_combiner)
                     continue
 
     # this func figures out if the new DL-Segment tri is already part of the tri-list (from ColSeg), and if
     # so, applys all the visual information to this already existing tri instead of using the new one.
     # this is VERY slow unfortunately...
     # this func also needs the entire existing-tri list aswell as the vtx-seg, so its in the collection class...
-    def add_and_transform_tri(self, new_tri, tile_descriptor, geomode, variant=None, texture_enabled=True):
+    def add_and_transform_tri(self, new_tri, tile_descriptor, geomode, variant=None, texture_enabled=True, combiner=0):
         # first, check if the tri already exists in our list
         # matching_tri_index = -1
         # for idx, existing_tri in enumerate(self.complete_tri_list):
@@ -324,6 +330,13 @@ class ModelBIN:
         # can avoid misreading that data as color/alpha.
         matching_tri.lit = bool(geomode & Dicts.RSP_GEOMODE_FLAGS["G_LIGHTING"])
         matching_tri.tex_extension = tile_descriptor.get_blender_extension()
+        matching_tri.combiner = combiner
+        # G_TEXTURE_GEN makes the RSP derive S/T from the vertex NORMAL instead of
+        # reading the vertex's own - environment mapping. It needs G_LIGHTING to be
+        # on, since that is what puts a normal in those bytes in the first place.
+        # NOTE the neighbouring G_TEXTURE_GEN_LINEAR (0x80000) is only a modifier:
+        # models emit it on its own all the time and it does nothing without this.
+        matching_tri.tex_gen = bool(geomode & Dicts.RSP_GEOMODE_FLAGS["G_TEXTURE_GEN"])
         # Blender can only express "cull back faces", so G_CULL_FRONT (which
         # would need the geometry flipped to represent) and G_CULL_BOTH (which
         # draws nothing at all) both fall back to drawing everything rather
@@ -381,6 +394,8 @@ class ModelBIN:
                 # material, which covers the normal case of consistent use
                 mat.tex_extension = tri.tex_extension
                 mat.cull_backface = tri.cull_backface
+                mat.tex_gen = tri.tex_gen
+                mat.combiner = tri.combiner
                 mat.link_image_object(self.TexSeg)
                 self.mat_list.append(mat)
             tri.mat_index = self.mat_list.index(mat)
@@ -393,6 +408,8 @@ class BinjoMaterial:
         self.name = f"{img_alias}_{coll_encoding}"
         self.tex_extension = 'REPEAT'
         self.cull_backface = True
+        self.tex_gen = False
+        self.combiner = 0
     
     def link_image_object(self, TexSeg):
         if (self.img_alias == "INVIS"):

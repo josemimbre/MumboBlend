@@ -10,15 +10,22 @@ class DisplayList_Command:
     OtherMode_CLEAR = 0x00000000
 
     def __init__(self, upper=0x00, lower=0x00, full=0x00):
+        # Derive the halves first and rebuild `full` from them, so both spellings
+        # of the constructor end up consistent. The previous version got this
+        # wrong twice: "(upper << 32) + lower & 0xFFFFFFFF" masks the whole SUM
+        # (& binds looser than + in Python), so every command parsed from binary
+        # kept only its low word - and get_bytes() writes `full`, so re-exporting
+        # a parsed DisplayList would have emitted commands with a zeroed top
+        # half. command_byte also read the `upper` PARAMETER rather than the
+        # resolved half, so anything built with full= reported command 0.
         if (full != 0x00):
-            self.full = full
             self.upper = ((full >> 32) & 0xFFFFFFFF)
-            self.lower = ((full >>  0) & 0xFFFFFFFF)
+            self.lower = (full & 0xFFFFFFFF)
         else:
-            self.full = ((upper << 32) + lower & 0xFFFFFFFF)
             self.upper = upper
             self.lower = lower
-        self.command_byte = (upper >> 24)
+        self.full = ((self.upper << 32) | self.lower)
+        self.command_byte = (self.upper >> 24)
         self.command_name = Dicts.F3DEX_CMD_NAMES_REV[self.command_byte]
         # print(self.command_name)
         self.infer_parameters()
