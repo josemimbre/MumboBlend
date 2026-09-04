@@ -196,6 +196,23 @@ class ModelBIN_VtxElem:
         self.u = int(64.0 * ((self.transformed_U * w_factor) - 0.5))
         self.v = int(64.0 * ((self.transformed_V * h_factor) - 0.5))
 
+    # Under G_LIGHTING the r/g/b bytes are not a colour but a packed vertex
+    # NORMAL, stored signed (-128..127 for -1..1); the fourth byte stays alpha.
+    # Returned already in Blender space, using the same (x, y, z) -> (x, -z, y)
+    # swap as every position, and normalised (a zero vector falls back to +Z so
+    # Blender never gets a degenerate normal).
+    def get_normal(self):
+        def _signed(byte):
+            return (byte - 0x100) if (byte > 0x7F) else byte
+        nx = _signed(self.r) / 127.0
+        ny = _signed(self.g) / 127.0
+        nz = _signed(self.b) / 127.0
+        vec = (nx, -nz, ny)
+        length = (vec[0] ** 2 + vec[1] ** 2 + vec[2] ** 2) ** 0.5
+        if (length < 1e-6):
+            return (0.0, 0.0, 1.0)
+        return (vec[0] / length, vec[1] / length, vec[2] / length)
+
     def clone(self):
         return self.__class__(
             self.x, self.y, self.z,

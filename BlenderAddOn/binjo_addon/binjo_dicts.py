@@ -297,6 +297,18 @@ class Dicts:
         0b1111: "unused_0F"
     }
 
+    # Every G_SETCOMBINE word seen across the models measured so far - only four,
+    # and three of them reduce to what the material already does once the engine's
+    # own constants are substituted (modelRender.c sets PRIM to black and ENV to
+    # white before drawing any model):
+    #   0xfc1298043f15ffff  TEXEL0 * SHADE, alpha TEXEL0_a * SHADE_a   <- the default
+    #   0xfc2698041f14ffff  same, plus a mipmap LOD blend we do not import
+    #   0xfc62fe043f15f9ff  SHADE alone, untextured (also caught by G_TEXTURE's
+    #                       enable bit, which is what actually drives that path)
+    #   0xfcff99ffff14fe3f  TEXEL0 alone - the texture is NOT multiplied by the
+    #                       vertex colour, so shade must not tint it
+    COMBINER_TEXTURE_ONLY = 0xfcff99ffff14fe3f
+
     RSP_GEOMODE_FLAGS = {
         "G_ZBUFFER":            0x00000001,
         "G_SHADE":              0x00000004,
