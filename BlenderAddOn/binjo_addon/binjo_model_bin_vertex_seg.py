@@ -176,8 +176,12 @@ class ModelBIN_VtxElem:
     # translate BKs uint8 UV coords into Blenders float [0.0 - 1.0] UV coords
     def calc_transformed_UVs(self, tile_descriptor):
         if (tile_descriptor is not None and tile_descriptor.tex_idx is not None):
-            self.transformed_U = ((self.u / 64.0) + tile_descriptor.S_shift + 0.5) / tile_descriptor.tex_width
-            self.transformed_V = ((self.v / 64.0) + tile_descriptor.T_shift + 0.5) / tile_descriptor.tex_height
+            # raw S/T are S10.5 fixed point, so /32 gives texels; the RSP then
+            # scales them by the factor G_TEXTURE carries. That factor is 0.5 in
+            # every model measured so far, which is why a single hardcoded /64
+            # used to work - it was the two constants folded together.
+            self.transformed_U = (((self.u / 32.0) * tile_descriptor.S_scale) + tile_descriptor.S_shift + 0.5) / tile_descriptor.tex_width
+            self.transformed_V = (((self.v / 32.0) * tile_descriptor.T_scale) + tile_descriptor.T_shift + 0.5) / tile_descriptor.tex_height
         else:
             self.transformed_U = ((self.u / 64.0) + 0 + 0.5) / 32.0
             self.transformed_V = ((self.v / 64.0) + 0 + 0.5) / 32.0

@@ -395,6 +395,14 @@ class TileDescriptor:
         self.S_wrap = 0.0
         self.S_shift = 0.0
 
+        # Texture-coordinate scale carried by G_TEXTURE, as a plain float (the
+        # command stores it 0.16 fixed point, so 0xFFFF is ~1.0 and 0x8000 is
+        # exactly 0.5). Defaults to 0.5, which is what every G_TEXTURE measured
+        # so far emits, and which keeps the combined divisor at the 64 this code
+        # used to hardcode for anything drawn before the first G_TEXTURE.
+        self.S_scale = 0.5
+        self.T_scale = 0.5
+
         self.tex_idx = None
         self.tex_width = 0
         self.tex_height = 0
