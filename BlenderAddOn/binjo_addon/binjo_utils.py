@@ -543,7 +543,6 @@ def tri_intersects_cube(tri, cube):
         -1.0 * np.max([A[2], B[2], C[2]]) > cube.scale or \
         +1.0 * np.min([A[2], B[2], C[2]]) > cube.scale
     ):
-        print("ni SAT axis trigger")
         return False
         
     # now, find the 9 cross-product sepperation-axes and check those
@@ -575,7 +574,6 @@ def tri_intersects_cube(tri, cube):
             -1.0 * np.max([pA, pB, pC]) > cube_extent or \
             +1.0 * np.min([pA, pB, pC]) > cube_extent
         ):
-            print("cross-prod SAT axis trigger")
             return False
 
     # if none of the 13 SA's triggered, the bodies don't overlap on any of the SA's, and according to the SAT, they therefor dont intersect

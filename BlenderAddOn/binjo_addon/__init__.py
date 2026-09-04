@@ -700,10 +700,8 @@ class BINJO_OT_export_to_BIN(bpy.types.Operator):
                     if (coll_type is not None):
                         collision_tris_A.append(tri)
                     # and if it has a valid tex_id, create the aforementioned DL command chunk for the buffered tris
-                    print(tex_id, assigned_mat["Visibility_Disabled"])
                     if (tex_id >= 0 and not assigned_mat["Visibility_Disabled"]):
                         buffered_tris_A.append(tri)
-                        print("hello DL ?")
                         # if we reached 10 buffered tris, we dump them into a tri-drawing chunk and flush it
                         # (the DL VTX-Buffer can hold 0x20==32 verts; 10 tris have 30 verts)
                         if (len(buffered_tris_A) == 10): 
@@ -1166,8 +1164,6 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             variant_coll.hide_render = True
 
 
-        # just some names to check if neccessary
-        print([e.name for e in bpy.data.materials[0].node_tree.nodes["Principled BSDF"].inputs])
         print(f"({timer() - import_timer_start:.3f}s) -- Done.")
 
         return { 'FINISHED' }
@@ -1665,7 +1661,6 @@ class BINJO_OT_change_mat_img(bpy.types.Operator, ImportHelper):
         mat.node_tree.nodes["TEX"].image = bpy.data.images.load(self.filepath)
         mat.node_tree.nodes["TEX"].image.filepath_raw = f"{self.filepath}"
 
-        print(self.filepath)
         return {'FINISHED'}
         
 class BINJO_OT_shade_selected_verts(bpy.types.Operator):
