@@ -216,6 +216,17 @@ class BINJO_Properties(bpy.types.PropertyGroup):
         description="Apply the selected Alpha when using the BINjo shading",
         default = True
     )
+    weld_seams : bpy.props.BoolProperty(
+        name="Weld Seams",
+        description=(
+            "Merge coincident vertices after importing. The BIN stores a separate vertex "
+            "for each side of a joint, each rigidly bound to its own bone, so the seam "
+            "pulls apart when animated (a neck lifting off the body). Welding them leaves "
+            "one vertex carrying both bones, holding the joint together. Turn off to keep "
+            "the mesh a 1:1 match of the BIN's vertex table"
+        ),
+        default = True
+    )
     highlight_invis : bpy.props.BoolProperty(
         name="Highlight INVIS Mats",
         description="Highlight all the INVIS (Collision-Only) Materials in Magenta",
@@ -313,6 +324,8 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row = layout.row()
         row.label(text="Scale Factor :")
         row.prop(context.scene.binjo_props, "scale_factor")
+        row = layout.row()
+        row.prop(context.scene.binjo_props, "weld_seams")
 
         # import a non-map object (character/prop/enemy, ...) from ROM
         layout.split()
@@ -911,6 +924,27 @@ def apply_vertex_pinning(mesh_obj, armature_obj, bone_seg, unk28_seg, scale_fact
 # - those are dead vertex-buffer data now, left with no face/edge at all.
 # Run this LAST (after vertex groups and Unk28 pinning, which both index by
 # the original raw vertex numbering) so nothing downstream needs remapping.
+# The BIN keeps a separate vertex for each side of a joint - the neck's own ring
+# and the body's ring sit on top of each other but are distinct entries, each
+# rigidly weighted to its own bone - so animating pulls the two apart and opens
+# the seam. Merging them leaves one vertex holding BOTH bones' groups, which is
+# what keeps the joint closed. fast64 does the same for SM64/OoT
+# (F3DContext.createMesh -> bpy.ops.mesh.remove_doubles, on by default), and
+# like there this has to run AFTER the vertex groups exist, so the survivor
+# inherits them, and after anything that indexes raw BIN vertex numbers.
+def weld_coincident_vertices(mesh_obj):
+    prev_active = bpy.context.view_layer.objects.active
+    prev_mode = mesh_obj.mode
+    bpy.context.view_layer.objects.active = mesh_obj
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.remove_doubles()
+    bpy.ops.object.mode_set(mode='OBJECT')
+    if (prev_mode != 'OBJECT'):
+        bpy.ops.object.mode_set(mode=prev_mode)
+    bpy.context.view_layer.objects.active = prev_active
+
+
 def remove_orphan_loose_vertices(mesh_obj):
     mesh = mesh_obj.data
     bm = bmesh.new()
@@ -1054,17 +1088,7 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
                 )
                 variant_coll.objects.link(variant_obj)
                 variant_objs.append(variant_obj)
-            # the default appearance is what the game shows, so the alternates
-            # stay out of the way until they're wanted. Hide via the LAYER
-            # collection (the eye) rather than collection.hide_viewport (the
-            # monitor icon), because the Outliner only shows the monitor toggle
-            # once it's switched on in the filter dropdown - the eye is there
-            # by default, so the alternates can actually be found and toggled.
-            layer_coll = context.view_layer.layer_collection.children.get(variant_coll.name)
-            if (layer_coll is not None):
-                layer_coll.hide_viewport = True
-            variant_coll.hide_render = True
-            print(f"split off {len(variant_objs)} SELECTOR variant(s) into 'import_Variants' (hidden)")
+            print(f"split off {len(variant_objs)} SELECTOR variant(s) into 'import_Variants'")
 
         if (bin_handler.model_object.BoneSeg.valid):
             armature_obj = build_armature_from_bones(bin_handler.model_object.BoneSeg, context.scene.binjo_props.scale_factor)
@@ -1087,6 +1111,23 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
 
         for obj in ([new_obj] + variant_objs):
             remove_orphan_loose_vertices(obj)
+            if (context.scene.binjo_props.weld_seams):
+                weld_coincident_vertices(obj)
+
+        # Hidden only now that every object has been through the welding above:
+        # that step needs Edit Mode, which Blender refuses on an object sitting
+        # in a hidden collection, so hiding any earlier makes it skip the
+        # variants in silence. The default appearance is what the game draws, so
+        # the alternates stay out of the way until they're wanted. Hide via the
+        # LAYER collection (the eye) rather than collection.hide_viewport (the
+        # monitor icon), because the Outliner only shows the monitor toggle once
+        # it is switched on in the filter dropdown - the eye is there by default,
+        # so the alternates can actually be found and toggled.
+        if (variant_objs):
+            layer_coll = context.view_layer.layer_collection.children.get(variant_coll.name)
+            if (layer_coll is not None):
+                layer_coll.hide_viewport = True
+            variant_coll.hide_render = True
 
 
         # just some names to check if neccessary
@@ -1236,12 +1277,6 @@ def _sample_curve(elem, frame, default=0.0):
     return keyframes[-1].value
 
 
-# union of keyframe frame numbers across any number of (possibly None)
-# AnimationElements - the shared set of frames to sample all of them at
-def _merged_frames(*elems):
-    return sorted({kf.frame for elem in elems if elem for kf in elem.keyframes})
-
-
 # This bone's own contribution to the animated pose, matching the game's
 # actual per-bone matrix construction (animMtxList_setBoned, decomp file
 # code_630D0.c):
@@ -1291,26 +1326,35 @@ def _local_bone_matrix(rest_head, components, frame, scaling_factor, model_scale
         Matrix.Rotation(pitch, 3, 'X')
     )
 
-    # scale (components 3/4/5) is always uniform/isotropic in every real
-    # animation checked - how the game hides/shows whole sub-parts (e.g.
-    # Kazooie tucked in Banjo's backpack)
-    scale = _sample_curve(components.get(binjo_animation.SCALE_X), frame, default=1.0)
+    # scale is per-axis, not uniform: animMtxList_setBoned calls
+    # mlMtxScale_xyz(sp68[0], sp68[1], sp68[2]) with the three components it
+    # fetched separately. Reading only SCALE_X and applying it to all three
+    # axes (what this used to do, on the assumption that real animations only
+    # ever scale isotropically) silently drops any per-axis stretch.
+    # The same (x,y,z) -> (x,-z,y) change as everywhere else permutes a
+    # diagonal scale to (x, z, y) - the sign drops out, since it squares away
+    # under the conjugation (verified numerically).
+    scale = Matrix.Diagonal((
+        _sample_curve(components.get(binjo_animation.SCALE_X), frame, default=1.0),
+        _sample_curve(components.get(binjo_animation.SCALE_Z), frame, default=1.0),
+        _sample_curve(components.get(binjo_animation.SCALE_Y), frame, default=1.0),
+    ))
 
     game_dx = scaling_factor * _sample_curve(components.get(binjo_animation.TRANSLATION_X), frame) / model_scale_factor
     game_dy = scaling_factor * _sample_curve(components.get(binjo_animation.TRANSLATION_Y), frame) / model_scale_factor
     game_dz = scaling_factor * _sample_curve(components.get(binjo_animation.TRANSLATION_Z), frame) / model_scale_factor
     delta = Vector((game_dx, -game_dz, game_dy))  # same (x,y,z) -> (x,-z,y) swap/flip as arrange_mesh_data()
 
-    # NOTE: scaling just the diagonal (RS[i][i] *= scale) is WRONG for any
-    # non-diagonal R - it only reproduces a true uniform scale-of-a-rotation
-    # (determinant scale^3) when R happens to be diagonal already (a bare
-    # 0/90/180/270-degree single-axis case). For a general rotation it bakes
-    # in real shear (verified numerically: 45deg @ scale=0.5 gave determinant
-    # 0.3125 instead of the correct 0.125 = 0.5^3). Multiplying the whole
-    # matrix by the (uniform) scale factor is the correct, commutative way
-    # to combine them, since scale*R == R@diag(scale,scale,scale) for a
-    # uniform scale.
-    RS = (R @ Matrix.Scale(scale, 3)).to_4x4()
+    # Rotation before scale, matching the decomp's premultiply order: the
+    # stored (row-vector) matrix ends up T(-rest) @ S @ R @ T(rest+d) @ parent,
+    # whose transpose - the column-vector form Blender wants - is
+    # parent @ T(rest+d) @ R @ S @ T(-rest).
+    # NOTE: folding the scale into R's diagonal (RS[i][i] *= scale) instead
+    # would be WRONG for any non-diagonal R: it bakes in real shear (verified
+    # numerically - 45deg at scale 0.5 gave determinant 0.3125 rather than the
+    # correct 0.125 = 0.5^3). A proper matrix product is the only way to
+    # combine them, uniform or not.
+    RS = (R @ scale).to_4x4()
     return Matrix.Translation(rest_head + delta) @ RS @ Matrix.Translation(-rest_head)
 
 
@@ -1429,8 +1473,19 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
         # keyframe - since Accum is pure Python recursion with no dependency
         # on any bone's live Blender state, bone/frame processing order here
         # doesn't matter.
+        # Baked on EVERY frame of the range rather than only on the frames a
+        # bone happens to carry data for. The game re-evaluates the curves per
+        # frame and rebuilds the matrix from the interpolated ANGLES; leaving
+        # gaps between keys instead hands the in-between frames to Blender,
+        # which interpolates the decomposed quaternion/location/scale of two
+        # already-built poses. Those are not the same interpolation, and since
+        # each bone would be keyed on its own sparse set of frames, a parent
+        # and its child drift apart differently between keys - which shows up
+        # as joints (a neck, a wing's segments) coming apart on exactly the
+        # frames where no key sits, while looking right on the keyed ones.
         accum_cache = {}
-        for bone_id, components in elements_by_bone.items():
+        all_frames = range(int(anim_file.start_frame), int(anim_file.end_frame) + 1)
+        for bone_id in elements_by_bone:
             bone_name = f"bone_{bone_id}"
             if (bone_name not in armature_obj.pose.bones):
                 continue
@@ -1438,7 +1493,7 @@ class BINJO_OT_apply_animation(bpy.types.Operator):
             pose_bone.rotation_mode = 'QUATERNION'
             matrix_local = pose_bone.bone.matrix_local
 
-            for frame in _merged_frames(*components.values()):
+            for frame in all_frames:
                 accum = _accum_matrix(pose_bone, frame, elements_by_bone, scaling_factor, model_scale_factor, accum_cache)
                 if (pose_bone.parent is not None):
                     parent_accum = _accum_matrix(pose_bone.parent, frame, elements_by_bone, scaling_factor, model_scale_factor, accum_cache)
