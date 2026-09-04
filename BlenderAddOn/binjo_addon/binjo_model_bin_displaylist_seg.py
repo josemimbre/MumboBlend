@@ -34,11 +34,6 @@ class DisplayList_Command:
     def infer_parameters(self):
         self.parameters = [0] * 16
 
-        if self.command_name == "G_SETCOMBINE":
-            if self.command_name not in DisplayList_Command.unimplemented_commands:
-                print(f"Unimplemented (and unhandled) Command encountered: {self.command_name}")
-                DisplayList_Command.unimplemented_commands.append(self.command_name)
-            return
 
         if self.command_name == "G_LOADBLOCK":
             # UL corner S coord
@@ -200,19 +195,26 @@ class DisplayList_Command:
             self.parameters[5] = binjo_utils.apply_bitmask(self.lower, 0b_0000_0000_0000_0000_0000_0000_1111_1111) // 2
             return
 
-        # these dont contain any parameters
+        # Nothing to break out into parameters for these, so reaching the end of
+        # the chain is not a sign that anything was missed.
         if self.command_name in {
             "G_SPNOOP",
             "G_ENDDL",
             "G_RDPLOADSYNC",
             "G_RDPPIPESYNC",
             "G_RDPTILESYNC",
-            "G_RDPFULLSYNC"
+            "G_RDPFULLSYNC",
+            # consumed as a whole 64-bit word by ModelBIN.build_complete_tri_list,
+            # which matches it against the known combiner programs rather than
+            # needing its 16 mux fields split out
+            "G_SETCOMBINE",
         }:
             return
 
+        # Anything else really is unread: the walk never looks at it and its
+        # fields are never decoded.
         if self.command_name not in DisplayList_Command.unimplemented_commands:
-            print(f"Unimplemented (and unhandled) Command encountered: {self.command_name}")
+            print(f"Unhandled Command encountered: {self.command_name}")
             DisplayList_Command.unimplemented_commands.append(self.command_name)
         return
 
