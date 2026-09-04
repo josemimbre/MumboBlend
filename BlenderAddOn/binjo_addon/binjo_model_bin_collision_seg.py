@@ -272,6 +272,7 @@ class ModelBIN_TriElem:
         self.lit            = False
         self.tex_extension  = 'REPEAT'
         self.variant        = None
+        self.cull_backface  = True
         return
 
     def get_bytes(self):
@@ -295,6 +296,7 @@ class ModelBIN_TriElem:
         self.lit            = False
         self.tex_extension  = 'REPEAT'
         self.variant        = None
+        self.cull_backface  = True
         return
 
     # link the VTX objects in the given VTX-list to the TRI objects in our tri-list via their indices

@@ -36,6 +36,13 @@ class ModelBIN_GeoCommandChain:
 
 class ModelBIN_GeoSeg:
 
+    # Import policy for SELECTOR, set from the addon's UI before parsing (see
+    # the SELECTOR handler for what it decides). A class attribute rather than
+    # a parameter because it would otherwise have to be threaded through
+    # ModelBIN and the BIN handler, neither of which knows anything about
+    # Blender or user preferences.
+    show_selector_defaults = True
+
     # python class constructor basically also serves as my member declaration...
     def __init__(self):
         self.valid = False
@@ -219,36 +226,41 @@ class ModelBIN_GeoSeg:
                 # reads a runtime state indexed by the selector ID at +0x0A and
                 # draws exactly ONE child (state-1), or none (state 0), or a
                 # bitmask-selected subset (negative state) - never all of them.
-                # Its children are alternate appearances of the same piece
-                # (the 8 eye states of a character head, Kazooie's bare feet vs
-                # her Turbo Trainers), so walking them all stacks every variant
-                # in the same place. A static import has no runtime state, so
-                # the first child is taken as the default appearance; the rest
-                # are still real content, so they're tagged rather than dropped
-                # and get built into their own hidden objects further down.
-                # A SINGLE-child selector is a show/hide switch, not a choice:
-                # drawing its one child unconditionally would make the command
-                # pointless. Its runtime state starts at 0 ("draw nothing") and
-                # only specific moves raise it, so the resting appearance is
-                # HIDDEN. On Banjo (func_8029DD6C, code_16C60.c, switching on
-                # ASSET_34D/34E) these are exactly ids 9/10/11 - Kazooie's
-                # wings, her legs and the egg gear - fed straight from three
-                # booleans with no "+1", unlike the multi-child selectors right
-                # beside them. Those booleans are raised only by bFlap/bSwim,
-                # bTrot (Talon Trot) and bEggAss respectively, so during an
-                # ordinary walk or idle the game draws none of them.
-                # Multi-child selectors always land on some child, so their
-                # first one stays the default appearance.
+                # Its children are alternate appearances of the same piece: the
+                # eye states of a head, Kazooie's bare feet vs her Turbo
+                # Trainers, a prop in Bottles' hand. Walking them all stacks
+                # every variant in the same place, so only one is taken as the
+                # default appearance and the rest are TAGGED, not dropped -
+                # they get built into their own hidden objects further down.
+                #
+                # Which one is the default cannot be read from the BIN. The
+                # state array starts zeroed and modelRender_reset() raises only
+                # ID 1 (to state 1, i.e. its child 0), so strictly every other
+                # selector draws nothing until the character's OWN C code
+                # raises it - and that goes both ways: Banjo's raises the ones
+                # holding his eyes (func_8029DD6C, code_16C60.c), while
+                # Bottles' explicitly zeroes the ones holding his hand-held
+                # props (func_802D94B4, ch/mole.c). Per-character code, not
+                # data, hence show_selector_defaults only picking which way to
+                # lean.
+                #
+                # A single-child selector is the one unambiguous case: it is a
+                # plain on/off switch, since drawing its only child
+                # unconditionally would make the command pointless. It stays
+                # hidden either way.
                 child_cnt = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
                 selector_id = binjo_utils.read_bytes(file_data, offset + 0x0A, 2)
+                shows_default = (child_cnt > 1) and (
+                    ModelBIN_GeoSeg.show_selector_defaults or selector_id == 1
+                )
                 for idx in range(0, child_cnt):
                     child_offset = binjo_utils.read_bytes(file_data, offset + 0x0C + (idx * 4), 4, type="signed")
                     if (child_offset != 0):
-                        if (child_cnt == 1 or idx > 0):
-                            child_key = f"sel{selector_id}_{idx}"
-                        else:
+                        if (idx == 0 and shows_default):
                             # a nested selector inside a variant keeps the outer tag
                             child_key = variant_key
+                        else:
+                            child_key = f"sel{selector_id}_{idx}"
                         self._walk(file_data, offset + child_offset, bone_stack, is_excluded, child_key)
 
             # every other command (unknown/opaque or purely cosmetic, e.g.
