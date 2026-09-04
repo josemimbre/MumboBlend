@@ -155,6 +155,8 @@ class ModelBIN:
             # recently passed" is enough, no need to jump around per bone.
             active_bone = None
             active_variant = None
+            # G_TEXTURE's enable bit: whether what follows is drawn textured at all
+            texture_enabled = True
             # RSP geometry-mode bitmask, updated by G_SETGEOMETRYMODE/G_CLEARGEOMETRYMODE
             # as we walk the DL - needed to tell G_LIGHTING tris apart from
             # G_SHADE ones, since both reuse the same 4 per-vertex bytes for
@@ -200,6 +202,9 @@ class ModelBIN:
 
                 if (cmd.command_name == "G_TEXTURE"):
                     active_descriptor = cmd.parameters[1]
+                    texture_enabled = bool(cmd.parameters[2])
+                    descriptor_array[active_descriptor].S_scale = cmd.parameters[3] / 0x10000
+                    descriptor_array[active_descriptor].T_scale = cmd.parameters[4] / 0x10000
                     continue
 
                 if (cmd.command_name == "G_SETTILE"):
@@ -246,7 +251,7 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled)
                     continue
 
                 if (cmd.command_name == "G_TRI2"):
@@ -256,21 +261,21 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled)
                     tmp_tri = ModelBIN_TriElem()
                     tmp_tri.build_from_parameters(
                         vertex_buffer[cmd.parameters[3]],
                         vertex_buffer[cmd.parameters[4]],
                         vertex_buffer[cmd.parameters[5]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled)
                     continue
 
     # this func figures out if the new DL-Segment tri is already part of the tri-list (from ColSeg), and if
     # so, applys all the visual information to this already existing tri instead of using the new one.
     # this is VERY slow unfortunately...
     # this func also needs the entire existing-tri list aswell as the vtx-seg, so its in the collection class...
-    def add_and_transform_tri(self, new_tri, tile_descriptor, geomode, variant=None):
+    def add_and_transform_tri(self, new_tri, tile_descriptor, geomode, variant=None, texture_enabled=True):
         # first, check if the tri already exists in our list
         # matching_tri_index = -1
         # for idx, existing_tri in enumerate(self.complete_tri_list):
@@ -294,16 +299,22 @@ class ModelBIN:
             matching_tri.variant = None
         # this is ALWAYS true if the tri was found in the DLs; Textured or not
         matching_tri.visible = True
-        # finally, link the tex ID and calculate the Blender-UVs with the help of the descriptor.
-        # A tri whose three vertices carry IDENTICAL raw S/T can't sample a texture
-        # meaningfully - BK uses that (u = v = -32, i.e. exactly 0 after the half-texel
-        # offset) for geometry the combiner draws from shade/vertex-colour alone, leaving
-        # whatever texture happens to still sit in TMEM irrelevant. Without this the tri
-        # inherits that unrelated texture and gets painted in its (0,0) texel: a flat
-        # colour, or nothing at all when that texel is transparent.
+        # finally, link the tex ID and calculate the Blender-UVs with the help of the
+        # descriptor. Plenty of BK geometry is drawn untextured, from vertex colour
+        # alone, and would otherwise inherit whatever texture still sits in TMEM and
+        # get painted in its (0,0) texel - a flat wrong colour, or nothing at all when
+        # that texel happens to be transparent. Two independent signals say so:
+        #   - G_TEXTURE's enable bit, which is what the hardware actually obeys
+        #   - all three vertices carrying IDENTICAL raw S/T (u = v = -32, i.e. exactly
+        #     0 after the half-texel offset), which cannot sample a texture anyway
+        # Measured on Banjo Low Poly, they agree on all 735 tris (571 untextured, 164
+        # textured). Both are kept: the enable bit is the authoritative one, and the
+        # S/T check still covers anything drawn before the first G_TEXTURE.
         if (
-            matching_tri.vtx_1.u == matching_tri.vtx_2.u == matching_tri.vtx_3.u and
-            matching_tri.vtx_1.v == matching_tri.vtx_2.v == matching_tri.vtx_3.v
+            not texture_enabled or (
+                matching_tri.vtx_1.u == matching_tri.vtx_2.u == matching_tri.vtx_3.u and
+                matching_tri.vtx_1.v == matching_tri.vtx_2.v == matching_tri.vtx_3.v
+            )
         ):
             matching_tri.tex_idx = None
         else:
