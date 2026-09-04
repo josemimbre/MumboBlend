@@ -15,6 +15,7 @@ from . binjo_model_bin_vertex_seg import ModelBIN_VtxElem
 from . binjo_model_bin_collision_seg import ModelBIN_ColSeg, ModelBIN_TriElem
 from . binjo_model_bin_texture_seg import ModelBIN_TexElem
 from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg
+from . binjo_model_bin_geolayout_seg import ModelBIN_GeoSeg
 
 
 import bpy
@@ -216,6 +217,18 @@ class BINJO_Properties(bpy.types.PropertyGroup):
         description="Apply the selected Alpha when using the BINjo shading",
         default = True
     )
+    show_selector_defaults : bpy.props.BoolProperty(
+        name="Show Selector Defaults",
+        description=(
+            "A SELECTOR only draws when the character's own game code raises its "
+            "state, which is not stored in the BIN. On: every multi-child selector "
+            "shows its first child, which is what Banjo needs for his eyes. Off: "
+            "only selector ID 1 does, matching the hardware defaults, which is what "
+            "Bottles needs to keep his hand-held props hidden. Either way every "
+            "child is imported - this only picks which one starts visible"
+        ),
+        default = True
+    )
     weld_seams : bpy.props.BoolProperty(
         name="Weld Seams",
         description=(
@@ -326,6 +339,8 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row.prop(context.scene.binjo_props, "scale_factor")
         row = layout.row()
         row.prop(context.scene.binjo_props, "weld_seams")
+        row = layout.row()
+        row.prop(context.scene.binjo_props, "show_selector_defaults")
 
         # import a non-map object (character/prop/enemy, ...) from ROM
         layout.split()
@@ -1040,6 +1055,9 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             # leaving Blender's default REPEAT tiles the texture over any face
             # whose UVs run past [0,1]
             tex_node.extension = binjo_mat.tex_extension
+            # from the RSP geometry mode of the chunk this material was drawn
+            # with, rather than assuming every surface culls its back faces
+            mat.use_backface_culling = binjo_mat.cull_backface
             # untextured mats have to bypass the mixers, see apply_texture_bypass
             apply_texture_bypass(mat)
             if (tex_node.image is not None):
@@ -1151,6 +1169,7 @@ class BINJO_OT_import_from_ROM(bpy.types.Operator):
 
         if (bin_handler is None or bin_handler.ROM_name != scene.binjo_props.rom_path):
             bin_handler = BINjo_ModelBIN_Handler(rom_filename=scene.binjo_props.rom_path)
+        ModelBIN_GeoSeg.show_selector_defaults = context.scene.binjo_props.show_selector_defaults
         bin_handler.load_model_file_from_ROM(scene.binjo_props.model_filename_enum)
 
         if (bin_handler.model_object is None):
@@ -1175,6 +1194,7 @@ class BINJO_OT_import_object_from_ROM(bpy.types.Operator):
 
         if (bin_handler is None or bin_handler.ROM_name != scene.binjo_props.rom_path):
             bin_handler = BINjo_ModelBIN_Handler(rom_filename=scene.binjo_props.rom_path)
+        ModelBIN_GeoSeg.show_selector_defaults = context.scene.binjo_props.show_selector_defaults
         bin_handler.load_object_file_from_ROM(scene.binjo_props.object_filename_enum)
 
         if (bin_handler.model_object is None):
@@ -1528,6 +1548,7 @@ class BINJO_OT_import_from_BIN(bpy.types.Operator, ImportHelper):
 
         if (bin_handler is None):
             bin_handler = BINjo_ModelBIN_Handler(rom_filename=None)
+        ModelBIN_GeoSeg.show_selector_defaults = context.scene.binjo_props.show_selector_defaults
         bin_handler.load_model_file_from_BIN(self.filepath)
 
         if (bin_handler.model_object is None):

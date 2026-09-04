@@ -313,6 +313,12 @@ class ModelBIN:
         # can avoid misreading that data as color/alpha.
         matching_tri.lit = bool(geomode & Dicts.RSP_GEOMODE_FLAGS["G_LIGHTING"])
         matching_tri.tex_extension = tile_descriptor.get_blender_extension()
+        # Blender can only express "cull back faces", so G_CULL_FRONT (which
+        # would need the geometry flipped to represent) and G_CULL_BOTH (which
+        # draws nothing at all) both fall back to drawing everything rather
+        # than hiding the wrong side.
+        cull = (geomode & Dicts.RSP_GEOMODE_FLAGS["G_CULL_BOTH"])
+        matching_tri.cull_backface = (cull == Dicts.RSP_GEOMODE_FLAGS["G_CULL_BACK"])
         matching_tri.vtx_1.calc_transformed_UVs(tile_descriptor)
         matching_tri.vtx_2.calc_transformed_UVs(tile_descriptor)
         matching_tri.vtx_3.calc_transformed_UVs(tile_descriptor)
@@ -363,6 +369,7 @@ class ModelBIN:
                 # the naming scheme - take the mode of whichever tri opens the
                 # material, which covers the normal case of consistent use
                 mat.tex_extension = tri.tex_extension
+                mat.cull_backface = tri.cull_backface
                 mat.link_image_object(self.TexSeg)
                 self.mat_list.append(mat)
             tri.mat_index = self.mat_list.index(mat)
@@ -374,6 +381,7 @@ class BinjoMaterial:
         self.coll_encoding = coll_encoding
         self.name = f"{img_alias}_{coll_encoding}"
         self.tex_extension = 'REPEAT'
+        self.cull_backface = True
     
     def link_image_object(self, TexSeg):
         if (self.img_alias == "INVIS"):
