@@ -10,6 +10,8 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-06
+
 ### Added
 
 - Skeleton import: models with a Bone segment arrive as a rigged mesh, with the

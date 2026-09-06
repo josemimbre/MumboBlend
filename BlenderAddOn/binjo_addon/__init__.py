@@ -35,7 +35,7 @@ bl_info = {
 bin_handler = None
 last_armature_obj = None
 last_bone_seg = None
-version_num = "0.1.3"
+version_num = "0.2.0"
 
 
 
