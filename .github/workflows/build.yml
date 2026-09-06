@@ -1,0 +1,83 @@
+name: Build
+
+on:
+  push:
+    paths:
+      - "BlenderAddOn/binjo_addon/**"
+      - "CHANGELOG.md"
+      - "Makefile"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "BlenderAddOn/binjo_addon/**"
+      - "CHANGELOG.md"
+      - "Makefile"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  addon-zip:
+    name: addon zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # full history: the build notes list every commit since the last
+          # version bump, which a shallow clone cannot see
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build the add-on zip
+        run: make zip
+
+      - name: Read the add-on version
+        id: addon
+        run: echo "version=$(make --no-print-directory version)" >> "$GITHUB_OUTPUT"
+
+      - name: Write the build notes
+        env:
+          ADDON_VERSION: ${{ steps.addon.outputs.version }}
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          unreleased="$(make --no-print-directory release-notes V=Unreleased)"
+          commits="$(make --no-print-directory build-notes)"
+          {
+            echo "# BINjo-Kazooie ${ADDON_VERSION}"
+            echo
+            echo "Built from \`${BUILD_SHA}\`."
+            echo
+            echo "## Unreleased changes"
+            echo
+            if [ -n "${unreleased}" ]; then
+              echo "${unreleased}"
+            else
+              echo "_The changelog has no unreleased entries._"
+            fi
+            echo
+            echo "## Commits since the last version bump"
+            echo
+            if [ -n "${commits}" ]; then
+              echo "${commits}"
+            else
+              echo "_None — this build is exactly the version bump._"
+            fi
+          } > BUILD_NOTES.md
+          cat BUILD_NOTES.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: BINjo_Kazooie-${{ steps.addon.outputs.version }}-${{ github.sha }}
+          path: |
+            BINjo_Kazooie.zip
+            BUILD_NOTES.md
+            CHANGELOG.md
+          if-no-files-found: error
+          retention-days: 30

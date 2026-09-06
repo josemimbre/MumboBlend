@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to create the GitHub Release and attach the add-on zip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the tag against the add-on version
+        id: addon
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$(make --no-print-directory version)"
+          if [ "${TAG#v}" != "${version}" ]; then
+            echo "::error::tag ${TAG} does not match the add-on version ${version}" \
+              " — run make bump-* and commit before tagging"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the add-on zip
+        run: make zip
+
+      - name: Write the release notes
+        env:
+          ADDON_VERSION: ${{ steps.addon.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="$(make --no-print-directory release-notes V="${ADDON_VERSION}")"
+          {
+            if [ -n "${notes}" ]; then
+              echo "${notes}"
+            else
+              echo "_No changelog entry for ${ADDON_VERSION}; commits in this release:_"
+              echo
+              make --no-print-directory build-notes
+            fi
+            echo
+            echo "---"
+            echo
+            echo "Install \`BINjo_Kazooie.zip\` via \`Edit > Preferences > Add-ons > Install...\` in Blender 3.4+."
+          } > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          ADDON_VERSION: ${{ steps.addon.outputs.version }}
+        run: |
+          set -euo pipefail
+          # re-running a tag (a moved tag, a re-run of the job) updates the
+          # existing release instead of failing on the duplicate
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "BINjo-Kazooie ${ADDON_VERSION}" \
+              --notes-file RELEASE_NOTES.md
+            gh release upload "${TAG}" BINjo_Kazooie.zip \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${TAG}" BINjo_Kazooie.zip \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "BINjo-Kazooie ${ADDON_VERSION}" \
+              --notes-file RELEASE_NOTES.md
+          fi
