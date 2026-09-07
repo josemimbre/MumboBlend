@@ -135,8 +135,14 @@ class ModelBIN_ColSeg:
             tri.build_from_binary_data(file_data, file_offset_tri)
             self.tri_list.append(tri)
 
-        # python trick to remove duplicates; sets are always unique
-        self.unique_tri_list = list(frozenset(self.tri_list))
+        # Deduplicate while KEEPING file order. A set would do the dedup just as
+        # well, but it hands the tris back in hash order, and this hash folds in
+        # the still-unset tex_idx - so hash(None), which Python derives from that
+        # singleton's address and therefore changes on every run. The tri order
+        # decides which triangle opens each material, and with it that material's
+        # render mode / extension / culling, so an import was not reproducible:
+        # the same model came out with different material settings run to run.
+        self.unique_tri_list = list(dict.fromkeys(self.tri_list))
         self.unique_tri_cnt = len(self.unique_tri_list)
 
         print(f"parsed {self.tri_cnt} collision tris within {self.geo_cube_cnt} cubes.")
