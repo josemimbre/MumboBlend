@@ -10,6 +10,20 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ## [Unreleased]
 
+### Added
+
+- Render mode and alpha compare are read from the model instead of assumed.
+  A draw picks its blending by branching into the engine's render mode table
+  (segment 3), and the models that need a cutout switch alpha compare to
+  `G_AC_THRESHOLD` around it. Opaque draws now import opaque, translucent ones
+  blend properly instead of being dithered, and cutouts clip at half alpha.
+
+### Fixed
+
+- Importing the same model twice produced different face order and different
+  material settings, because the collision segment deduplicated its triangles
+  through a set whose order depended on `hash(None)`.
+
 ## [0.2.0] - 2026-09-06
 
 ### Added

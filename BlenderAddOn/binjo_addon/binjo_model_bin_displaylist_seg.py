@@ -67,6 +67,17 @@ class DisplayList_Command:
             self.parameters[4] = binjo_utils.apply_bitmask(self.lower, 0b_0000_0000_0000_0000_0000_1111_1111_1111) // 4 + 1
             return
 
+        if self.command_name == "G_SetOtherMode_L":
+            # same layout as the _H twin below; the field this addresses is
+            # identified by (shift, num bits) - see Dicts.OTHERMODE_L_MDSFT
+            # shift
+            self.parameters[0] = binjo_utils.apply_bitmask(self.upper, 0b_0000_0000_0000_0000_1111_1111_0000_0000)
+            # num affected bits
+            self.parameters[1] = binjo_utils.apply_bitmask(self.upper, 0b_0000_0000_0000_0000_0000_0000_1111_1111)
+            # new mode-bits
+            self.parameters[2] = self.lower
+            return
+
         if self.command_name == "G_SetOtherMode_H":
             # shift
             self.parameters[0] = binjo_utils.apply_bitmask(self.upper, 0b_0000_0000_0000_0000_1111_1111_0000_0000)

@@ -159,6 +159,12 @@ class ModelBIN:
             texture_enabled = True
             # colour-combiner word in force; see COMBINER_TEXTURE_ONLY
             active_combiner = 0
+            # index into the engine's render mode table, picked by branching
+            # into segment 3; None until the model picks one (see Dicts.RENDER_MODES)
+            active_render_mode = None
+            # alpha compare, switched around cutout geometry by G_SetOtherMode_L;
+            # the frame setup leaves it at G_AC_NONE, so that is where we start
+            active_alpha_compare = Dicts.ALPHA_COMPARE["G_AC_NONE"]
             # RSP geometry-mode bitmask, updated by G_SETGEOMETRYMODE/G_CLEARGEOMETRYMODE
             # as we walk the DL - needed to tell G_LIGHTING tris apart from
             # G_SHADE ones, since both reuse the same 4 per-vertex bytes for
@@ -204,6 +210,24 @@ class ModelBIN:
 
                 if (cmd.command_name == "G_SETCOMBINE"):
                     active_combiner = cmd.full
+                    continue
+
+                # A G_DL into segment 3 is not geometry: it is how a model picks
+                # its render mode out of the engine's table (see Dicts.RENDER_MODES).
+                # The DLs of other segments are already flattened into this list,
+                # so nothing else needs following.
+                if (cmd.command_name == "G_DL" and cmd.parameters[1] == Dicts.INTERNAL_SEG_NAMES["Mode"]):
+                    active_render_mode = (cmd.parameters[2] // Dicts.RENDER_MODE_ENTRY_SIZE)
+                    continue
+
+                if (cmd.command_name == "G_SetOtherMode_L"):
+                    # the only field models ever touch is alpha compare, switched
+                    # on around cutout geometry and off again right after
+                    if (
+                        cmd.parameters[0] == Dicts.OTHERMODE_L_MDSFT["G_MDSFT_ALPHACOMPARE"]
+                        and cmd.parameters[1] == 2
+                    ):
+                        active_alpha_compare = cmd.parameters[2]
                     continue
 
                 if (cmd.command_name == "G_TEXTURE"):
@@ -257,7 +281,7 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled, active_combiner)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled, active_combiner, active_render_mode, active_alpha_compare)
                     continue
 
                 if (cmd.command_name == "G_TRI2"):
@@ -267,21 +291,21 @@ class ModelBIN:
                         vertex_buffer[cmd.parameters[1]],
                         vertex_buffer[cmd.parameters[2]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled, active_combiner)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled, active_combiner, active_render_mode, active_alpha_compare)
                     tmp_tri = ModelBIN_TriElem()
                     tmp_tri.build_from_parameters(
                         vertex_buffer[cmd.parameters[3]],
                         vertex_buffer[cmd.parameters[4]],
                         vertex_buffer[cmd.parameters[5]]
                     )
-                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled, active_combiner)
+                    self.add_and_transform_tri(tmp_tri, descriptor_array[active_descriptor], active_geomode, active_variant, texture_enabled, active_combiner, active_render_mode, active_alpha_compare)
                     continue
 
     # this func figures out if the new DL-Segment tri is already part of the tri-list (from ColSeg), and if
     # so, applys all the visual information to this already existing tri instead of using the new one.
     # this is VERY slow unfortunately...
     # this func also needs the entire existing-tri list aswell as the vtx-seg, so its in the collection class...
-    def add_and_transform_tri(self, new_tri, tile_descriptor, geomode, variant=None, texture_enabled=True, combiner=0):
+    def add_and_transform_tri(self, new_tri, tile_descriptor, geomode, variant=None, texture_enabled=True, combiner=0, render_mode=None, alpha_compare=0):
         # first, check if the tri already exists in our list
         # matching_tri_index = -1
         # for idx, existing_tri in enumerate(self.complete_tri_list):
@@ -331,6 +355,11 @@ class ModelBIN:
         matching_tri.lit = bool(geomode & Dicts.RSP_GEOMODE_FLAGS["G_LIGHTING"])
         matching_tri.tex_extension = tile_descriptor.get_blender_extension()
         matching_tri.combiner = combiner
+        # how the RDP blends this draw (opaque / coverage-modulated / translucent)
+        # and whether it clips against the alpha threshold; both come from state
+        # the model sets around the draw rather than from the triangle itself
+        matching_tri.render_mode = render_mode
+        matching_tri.alpha_compare = alpha_compare
         # G_TEXTURE_GEN makes the RSP derive S/T from the vertex NORMAL instead of
         # reading the vertex's own - environment mapping. It needs G_LIGHTING to be
         # on, since that is what puts a normal in those bytes in the first place.
@@ -396,6 +425,8 @@ class ModelBIN:
                 mat.cull_backface = tri.cull_backface
                 mat.tex_gen = tri.tex_gen
                 mat.combiner = tri.combiner
+                mat.render_mode = tri.render_mode
+                mat.alpha_compare = tri.alpha_compare
                 mat.link_image_object(self.TexSeg)
                 self.mat_list.append(mat)
             tri.mat_index = self.mat_list.index(mat)
@@ -410,6 +441,8 @@ class BinjoMaterial:
         self.cull_backface = True
         self.tex_gen = False
         self.combiner = 0
+        self.render_mode = None
+        self.alpha_compare = 0
     
     def link_image_object(self, TexSeg):
         if (self.img_alias == "INVIS"):

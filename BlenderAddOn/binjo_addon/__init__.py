@@ -1076,6 +1076,8 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             apply_texture_gen(mat, binjo_mat.tex_gen)
             # untextured mats have to bypass the mixers, see apply_texture_bypass
             apply_texture_bypass(mat, binjo_mat.combiner)
+            # and how the RDP blended those draws decides how Blender should
+            apply_render_mode(mat, binjo_mat.render_mode, binjo_mat.alpha_compare)
             if (tex_node.image is not None):
                 if (not os.path.isdir(context.scene.binjo_props.export_path)):
                     self.report({'WARNING'}, "Export Path is not set to a viable Directory - Not saving tmp Images...")
@@ -1846,6 +1848,79 @@ def apply_texture_bypass(mat, combiner=0):
         links.new(mix_alpha.outputs["Color"], principled.inputs["Alpha"])
 
 
+# How the RDP blends this material's draws, and whether it clips them against
+# the alpha threshold. Both are state the model sets around the draw (a branch
+# into the engine's render mode table, and G_SetOtherMode_L) rather than
+# anything stored per triangle - see Dicts.RENDER_MODES.
+#
+# Measured over 823 models: only indices 0-5 are ever selected, alpha compare is
+# only ever switched to THRESHOLD, and the two agree with what the geometry
+# carries - no OPA draw has vertex alpha below 255 (0 of 29937 measured), and
+# every draw with a THRESHOLD cutout is a translucent one on a texture that
+# really does have transparent texels.
+#
+# Call AFTER apply_texture_bypass, which decides where Alpha is fed from.
+def apply_render_mode(mat, render_mode=None, alpha_compare=0):
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    principled = nodes.get("Principled BSDF")
+    if (principled is None):
+        return
+    alpha_input = principled.inputs["Alpha"]
+
+    mode = Dicts.RENDER_MODES.get(render_mode)
+    # OPA: the blender emits the incoming colour and never reads alpha.
+    # XLU/AA_XLU: ordinary IN*a + MEM*(1-a).
+    # AA_OPA (and an unknown or never-set mode): alpha modulates COVERAGE rather
+    # than blending, which is what Blender's dithered transparency approximates.
+    opaque = (mode == "OPA")
+    translucent = (mode == "XLU" or mode == "AA_XLU")
+
+    # "blend_method" (pre-4.2) got replaced by "surface_render_method" (4.2+),
+    # and that one offers only DITHERED and BLENDED - EEVEE Next has no opaque
+    # render method, because being opaque is a consequence of alpha being 1,
+    # which is exactly what an OPA draw amounts to. So OPA is expressed by
+    # cutting the alpha chain below instead, on every version.
+    if (hasattr(mat, "surface_render_method")):
+        mat.surface_render_method = ("BLENDED" if translucent else "DITHERED")
+    else:
+        mat.blend_method = ("BLEND" if translucent else ("OPAQUE" if opaque else "HASHED"))
+
+    clip_node = nodes.get("ALPHA_CLIP")
+    wants_clip = (alpha_compare == Dicts.ALPHA_COMPARE["G_AC_THRESHOLD"] and not opaque)
+
+    if (not wants_clip):
+        # rebuilt without a cutout: drop the node and reconnect what fed it
+        if (clip_node is not None):
+            source = clip_node.inputs[0].links[0].from_socket if clip_node.inputs[0].links else None
+            nodes.remove(clip_node)
+            if (source is not None):
+                links.new(source, alpha_input)
+        if (opaque):
+            # whatever the texture or the vertices say about alpha is not
+            # supposed to show, so feed the BSDF a flat 1 instead
+            for link in list(alpha_input.links):
+                links.remove(link)
+            alpha_input.default_value = 1.0
+        return
+
+    # G_AC_THRESHOLD discards every pixel whose alpha falls below the blend
+    # colour's, which the engine pins at 0x80 - a hard cutout at half. Blender
+    # 4.2 dropped the CLIP blend mode, so do it in the graph, which works on
+    # every version: force the alpha to 0 or 1 before it reaches the BSDF.
+    source = alpha_input.links[0].from_socket if alpha_input.links else None
+    if (source is None or (clip_node is not None and source.node == clip_node)):
+        return
+    if (clip_node is None):
+        clip_node = nodes.new("ShaderNodeMath")
+        clip_node.name = "ALPHA_CLIP"
+        clip_node.operation = "GREATER_THAN"
+        clip_node.location = (-100, -300)
+    clip_node.inputs[1].default_value = Dicts.ALPHA_COMPARE_THRESHOLD_LEVEL
+    links.new(source, clip_node.inputs[0])
+    links.new(clip_node.outputs["Value"], alpha_input)
+
+
 def set_mat_to_default(mat):
     # first, retain (potential) old images, and remove old nodes
     # pulled from BBMat4.1
@@ -1863,6 +1938,9 @@ def set_mat_to_default(mat):
         
     # setting internal parameters within the mat
     mat.use_nodes = True
+    # Dithered transparency as the starting point; apply_render_mode overrides it
+    # with what the model's render mode actually asks for, and materials built by
+    # hand (rather than imported) keep this.
     # "blend_method" (pre-4.2) got replaced by "surface_render_method" (4.2+); "shadow_method" got removed entirely in 4.3+
     if (hasattr(mat, "surface_render_method")):
         mat.surface_render_method = "DITHERED" # "DITHERED" == Dithered Transparency

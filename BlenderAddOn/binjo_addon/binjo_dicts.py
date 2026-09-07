@@ -309,6 +309,64 @@ class Dicts:
     #                       vertex colour, so shade must not tint it
     COMBINER_TEXTURE_ONLY = 0xfcff99ffff14fe3f
 
+    # === Render mode ==========================================================
+    # A model never emits gsDPSetRenderMode itself. The engine binds segment 3 to
+    # a 13-entry table of render modes (banjo-kazooie decomp, core2/modelRender.c:
+    # renderModesNoDepthOpa / FullDepthOpa / DepthCompareOpa and their Xlu twins)
+    # and the model picks one per draw call by branching into it with a G_DL,
+    # entry N sitting at offset N * 0x10. Which of the six tables is bound is a
+    # runtime decision (depth mode, and whether the whole model is being faded),
+    # but the entry index is model data, and across all six tables index N always
+    # carries the same blender:
+    #   OPA     CVG_DST_CLAMP | FORCE_BL, out = IN     -> alpha ignored, opaque
+    #   AA_OPA  ALPHA_CVG_SEL              -> alpha modulates COVERAGE, not colour
+    #   XLU     FORCE_BL, IN*a + MEM*(1-a) -> ordinary alpha blending
+    # Every entry uses ZMODE_OPA: BK never uses the RDP's decal z-mode (ZMODE_DEC
+    # appears nowhere in the decomp), so coplanar detail is not expressible here.
+    RENDER_MODE_ENTRY_SIZE = 0x10
+    RENDER_MODES = {
+        0:  "OPA",
+        1:  "AA_OPA",
+        2:  "XLU",
+        3:  "AA_XLU",
+        4:  "XLU",
+        5:  "AA_XLU",
+        6:  "OPA",
+        7:  "AA_OPA",
+        8:  "XLU",
+        9:  "AA_XLU",
+        10: "XLU",
+        11: "AA_XLU",
+        12: "AA_XLU",  # plus CVG_DST_SAVE, which has no Blender equivalent
+    }
+
+    # G_SetOtherMode_L field positions, mirroring OTHERMODE_H_MDSFT above
+    OTHERMODE_L_MDSFT = {
+        "G_MDSFT_ALPHACOMPARE": 0x00,
+        "G_MDSFT_ZSRCSEL":      0x02,
+        "G_MDSFT_RENDERMODE":   0x03,
+    }
+    OTHERMODE_L_MDSFT_REV = {
+        0x00: "G_MDSFT_ALPHACOMPARE",
+        0x02: "G_MDSFT_ZSRCSEL",
+        0x03: "G_MDSFT_RENDERMODE",
+    }
+    # Alpha compare, the 2-bit field at G_MDSFT_ALPHACOMPARE. The frame setup
+    # (core1/code_15B30.c func_80253640) leaves it at G_AC_NONE, and the models
+    # that want a cutout switch it to THRESHOLD around those draws and back.
+    # THRESHOLD discards any pixel whose alpha is below the blend colour's alpha,
+    # which every one of the engine's setup lists fixes at 0x80 - so the cutoff is
+    # exactly half.
+    ALPHA_COMPARE = {
+        "G_AC_NONE":      0b00,
+        "G_AC_THRESHOLD": 0b01,
+        "G_AC_DITHER":    0b11,
+    }
+    # Sat halfway between 0x7F and 0x80 on purpose: the hardware KEEPS a pixel
+    # whose alpha equals 0x80, and Blender's Greater Than is strict, so testing
+    # against 0x80/0xFF itself would drop exactly that value.
+    ALPHA_COMPARE_THRESHOLD_LEVEL = ((0x80 - 0.5) / 0xFF)
+
     RSP_GEOMODE_FLAGS = {
         "G_ZBUFFER":            0x00000001,
         "G_SHADE":              0x00000004,
