@@ -1077,7 +1077,7 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             # untextured mats have to bypass the mixers, see apply_texture_bypass
             apply_texture_bypass(mat, binjo_mat.combiner)
             # and how the RDP blended those draws decides how Blender should
-            apply_render_mode(mat, binjo_mat.render_mode, binjo_mat.alpha_compare)
+            apply_render_mode(mat, binjo_mat.render_mode, binjo_mat.alpha_compare, binjo_mat.needs_alpha)
             if (tex_node.image is not None):
                 if (not os.path.isdir(context.scene.binjo_props.export_path)):
                     self.report({'WARNING'}, "Export Path is not set to a viable Directory - Not saving tmp Images...")
@@ -1860,7 +1860,7 @@ def apply_texture_bypass(mat, combiner=0):
 # really does have transparent texels.
 #
 # Call AFTER apply_texture_bypass, which decides where Alpha is fed from.
-def apply_render_mode(mat, render_mode=None, alpha_compare=0):
+def apply_render_mode(mat, render_mode=None, alpha_compare=0, needs_alpha=True):
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     principled = nodes.get("Principled BSDF")
@@ -1869,12 +1869,22 @@ def apply_render_mode(mat, render_mode=None, alpha_compare=0):
     alpha_input = principled.inputs["Alpha"]
 
     mode = Dicts.RENDER_MODES.get(render_mode)
-    # OPA: the blender emits the incoming colour and never reads alpha.
-    # XLU/AA_XLU: ordinary IN*a + MEM*(1-a).
-    # AA_OPA (and an unknown or never-set mode): alpha modulates COVERAGE rather
-    # than blending, which is what Blender's dithered transparency approximates.
-    opaque = (mode == "OPA")
-    translucent = (mode == "XLU" or mode == "AA_XLU")
+    # What decides opacity is whether the material carries any alpha at all - a
+    # transparent texel, a vertex alpha below 255, a cutout - not the render
+    # mode. Both directions matter:
+    #   - no alpha anywhere: nothing can show through whatever the mode says, so
+    #     draw it opaque. 76% of measured materials are in this case (20 of
+    #     Banjo's 22), and a transparency method costs Blender a pass each.
+    #   - alpha present: never forced opaque, not even in OPA where the hardware
+    #     genuinely ignores it. The mode comes from whichever triangle opened the
+    #     material, so trusting it over the material's own contents hides
+    #     geometry - measured on 2 of 316 materials, and it is also what walled
+    #     a whole map in when collision-only geometry got called opaque.
+    opaque = (not needs_alpha)
+    # XLU/AA_XLU blend with IN*a + MEM*(1-a); AA_OPA modulates COVERAGE by alpha
+    # rather than blending, which is what dithered transparency approximates,
+    # and an unknown or never-set mode falls in with it.
+    translucent = (not opaque) and (mode == "XLU" or mode == "AA_XLU")
 
     # "blend_method" (pre-4.2) got replaced by "surface_render_method" (4.2+),
     # and that one offers only DITHERED and BLENDED - EEVEE Next has no opaque
@@ -1902,6 +1912,13 @@ def apply_render_mode(mat, render_mode=None, alpha_compare=0):
             for link in list(alpha_input.links):
                 links.remove(link)
             alpha_input.default_value = 1.0
+        elif (not alpha_input.links):
+            # and put it back if this material was opaque last time round -
+            # without this the function cannot undo itself, which quietly breaks
+            # both re-imports and any comparison between two classifications
+            source = nodes.get("ALPHA_MIX") or nodes.get("RGBA")
+            if (source is not None):
+                links.new(source.outputs[0], alpha_input)
         return
 
     # G_AC_THRESHOLD discards every pixel whose alpha falls below the blend

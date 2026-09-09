@@ -15,8 +15,11 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 - Render mode and alpha compare are read from the model instead of assumed.
   A draw picks its blending by branching into the engine's render mode table
   (segment 3), and the models that need a cutout switch alpha compare to
-  `G_AC_THRESHOLD` around it. Opaque draws now import opaque, translucent ones
-  blend properly instead of being dithered, and cutouts clip at half alpha.
+  `G_AC_THRESHOLD` around it. Translucent surfaces now blend properly instead of
+  being dithered, and cutouts clip at half alpha. Whether a material is drawn
+  opaque follows from whether it carries any alpha at all - a transparent texel,
+  a vertex alpha below 255, or a cutout - rather than from the render mode,
+  which belongs to whichever triangle opened the material.
 
 ### Fixed
 

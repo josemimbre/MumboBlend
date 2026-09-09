@@ -174,6 +174,13 @@ class ModelBIN_TexElem:
             self.width, self.height
         )
 
+        # Whether any texel is actually see-through, straight off the decoded
+        # pixels. contains_transparency above answers the same question by
+        # reading a CI palette as RGBA8888 when it is really RGBA5551, so it is
+        # not usable here - and it is left alone because the exporter splits
+        # model A/B on it.
+        self.has_alpha_texels = bool((self.color_pixels[..., 3] < 255).any())
+
         self.Blender_IMG = bpy.data.images.new("tmp", width=self.width, height=self.height)
         self.Blender_IMG.file_format = 'PNG'
         # Blenders bpy.data.images expects the RGBA values to range inbetween (0.0, 1.0) instead of (0, 255)
