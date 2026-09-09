@@ -15,7 +15,15 @@
 # '(translucent)' here; their opaque partner carries no suffix. Verified: 172 rows, no
 # gaps, every offset agrees with the ROM pointer table, and 164 of them decompress into a
 # Model-BIN (identifier 0x0B) - the 8 marked 'empty in ROM' are genuinely empty slots,
-# which is also why neither this table nor the decomp ever named them.
+# start offset equal to end offset, which is also why neither this table nor the decomp
+# ever named them.
+#
+# core2/mapModel.c holds the game's own map -> {OPA asset, XLU asset} table, and it loads
+# only 161 of these 172 files. The 11 nothing loads are those 8 empty slots, the test map
+# (0x6C/0x6D), and 0x32 - which does hold data, but only a room-sized collision shell with
+# no drawn geometry at all, and neither the decomp nor that table names or uses it. The
+# 'Dark Room' half of its label is inherited guesswork, kept because it is the only lead
+# anyone has ever had on it.
 map_model_lookup = {
     "(0x00) Unknown 01 - empty in ROM":               (0x5D93D0, 0x101E8),
     "(0x01) TTC - Treasure Trove Cove":               (0x5D93D0, 0x101F0),
@@ -67,7 +75,7 @@ map_model_lookup = {
     "(0x2F) MMM - Inside Loggo (translucent)":        (0x742170, 0x10360),
     "(0x30) MMM - Dining Room (translucent)":         (0x742C38, 0x10368),
     "(0x31) MMM - Cellar (translucent)":              (0x745520, 0x10370),
-    "(0x32) ??? Dark Room":                           (0x746348, 0x10378),
+    "(0x32) Unused Dark Room - collision only":       (0x746348, 0x10378),
     "(0x33) CS - Start Nintendo":                     (0x7464A0, 0x10380),
     "(0x34) CS - Start Rareware":                     (0x749710, 0x10388),
     "(0x35) CS - End Spiral Mountain":                (0x749798, 0x10390),
@@ -125,8 +133,8 @@ map_model_lookup = {
     "(0x69) BGS - Mr. Vile":                          (0x9225D8, 0x10530),
     "(0x6A) BGS - Tiptup Quior":                      (0x92A940, 0x10538),
     "(0x6B) BGS - Tiptup Quior (translucent)":        (0x930E98, 0x10540),
-    "(0x6C) ?? - Test Map":                           (0x931908, 0x10548),
-    "(0x6D) ?? - Test Map (translucent)":             (0x931E70, 0x10550),
+    "(0x6C) Test Map":                                (0x931908, 0x10548),
+    "(0x6D) Test Map (translucent)":                  (0x931E70, 0x10550),
     "(0x6E) CCW - Hub":                               (0x9323D0, 0x10558),
     "(0x6F) CCW - Spring":                            (0x966C48, 0x10560),
     "(0x70) CCW - Summer":                            (0x9981C8, 0x10568),
