@@ -21,6 +21,16 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
   a vertex alpha below 255, or a cutout - rather than from the render mode,
   which belongs to whichever triangle opened the material.
 
+### Changed
+
+- Map names now come from the decomp's asset enum. 53 were vague or plain wrong
+  - `0x42` was labelled "MM - Termite Hill" but is Spiral Mountain's Ticker's
+  Tower, and most of Gruntilda's Lair was numbered floors rather than named
+  rooms. The old `A`/`B` suffixes turn out to have meant OPA/XLU: every level
+  ships as two model files, the opaque bulk and a small translucent one (water,
+  glass, cobwebs), so the translucent halves now say so. The 8 entries that are
+  empty slots in the ROM are marked as such.
+
 ### Fixed
 
 - Importing the same model twice produced different face order and different
