@@ -10,6 +10,8 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-10
+
 ### Added
 
 - Render mode and alpha compare are read from the model instead of assumed.
