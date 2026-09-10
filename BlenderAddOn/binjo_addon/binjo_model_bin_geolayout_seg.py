@@ -15,10 +15,20 @@ class ModelBIN_GeoCommandChain:
         self.entries = []
 
         self.entries.append(Dicts.GEO_CMD_NAMES["DRAW_DISTANCE"])
-        self.entries.append(0x00000028) # full length of the chain (10 entries à 4B = 40 B = 0x28 B)
+        # size_4 is NOT the length of the chain: it is the relative jump to the
+        # next sibling, and 0 ends the chain (core2/modelRender.c func_80339124
+        # runs the command, returns if size_4 == 0, else advances by it). This
+        # is the only root command, so it has to be 0. It used to be 0x28 - the
+        # value real DRAW_DISTANCE nodes carry when another sibling follows - so
+        # the walk jumped past the end of the list: re-importing an exported
+        # .bin died with an IndexError, and the console would have read
+        # whatever followed as a command.
+        self.entries.append(0x00000000)
         self.entries.append((binjo_utils.get_2s_complement(min_x, 2) << 16) + binjo_utils.get_2s_complement(min_y, 2))
         self.entries.append((binjo_utils.get_2s_complement(min_z, 2) << 16) + binjo_utils.get_2s_complement(max_x, 2))
         self.entries.append((binjo_utils.get_2s_complement(max_y, 2) << 16) + binjo_utils.get_2s_complement(max_z, 2))
+        # upper half: offset to the child chain (the LOAD_DL below, at +0x18),
+        # which is what the command descends into when its box is in view
         self.entries.append(0x001808D3)
 
         self.entries.append(Dicts.GEO_CMD_NAMES["LOAD_DL"])

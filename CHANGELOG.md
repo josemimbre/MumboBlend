@@ -34,6 +34,10 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Fixed
 
+- Exported `.bin` files could not be read back, by the addon or by the game. The
+  exporter's GeoLayout ended in a root command with `size_4 = 0x28`, but that
+  field is the jump to the next sibling and 0 ends the chain, so the walk ran
+  past the end of the file. It is now 0.
 - Importing a second model into the same scene could repaint the first one.
   Material names are texture offsets within their own model file, so the first
   texture of every model was `0x00000000`, and the importer reused an existing
