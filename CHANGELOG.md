@@ -10,6 +10,19 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ## [Unreleased]
 
+### Changed
+
+- Object and animation names were reviewed against the decomp's own code, not
+  only its asset enum. Zone prefixes are upper-case like the map list (`TTC`,
+  `GL`, `CCW`...). Where the enum gave two models the same name, the code that
+  uses them tells them apart: `0x3B7` is TTC Stairs 2, `0x4D8` the right leaf
+  of the FP entrance door, `0x444` the Summer Zubba door, `0x7C2`/`0x7C3` the
+  two layers of MMM's sky, and `0x412` the engine fan's propeller switch.
+  159 animations that only had a number now name the character whose code plays
+  them (Final Boss, Boggy, Slappa, Tanktup Leg...), and four also say what they
+  do where the code makes it plain - Banjo's walrus recoil, Mr. Vile's croc
+  munch, Gobi crying and the Eyrie egg hatching.
+
 ## [0.3.0] - 2026-09-10
 
 ### Added
