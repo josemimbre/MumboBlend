@@ -34,6 +34,14 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Fixed
 
+- Importing a second model into the same scene could repaint the first one.
+  Material names are texture offsets within their own model file, so the first
+  texture of every model was `0x00000000`, and the importer reused an existing
+  material by that name and swapped in its own image - importing TTC's skybox
+  changed textures on the level. Materials are now prefixed with the model they
+  came from (its asset uid, or the `.bin` file name), and images are named the
+  same way instead of all being `tmp`, which also stops their saved copies
+  overwriting each other.
 - Importing the same model twice produced different face order and different
   material settings, because the collision segment deduplicated its triangles
   through a set whose order depended on `hash(None)`.

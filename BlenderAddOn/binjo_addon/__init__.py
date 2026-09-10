@@ -1057,15 +1057,31 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
 
         # now create actual materials from the mat-names (reuse an existing
         # datablock if this model was already imported before, so repeated
-        # imports don't pile up NAME.001, NAME.002, ... duplicates)
+        # imports don't pile up NAME.001, NAME.002, ... duplicates).
+        # The parser's material name is only unique inside ITS model file: it is
+        # the texture's offset into that file's texture segment, so the first
+        # texture of every model is "0x00000000". Reusing by that bare name
+        # handed a second model the first one's material and repainted it -
+        # importing a skybox changed textures on the level. Prefixing the model
+        # it came from keeps re-imports reusing their own materials while
+        # different models stay apart. The prefix goes in FRONT: the collision
+        # code has to stay last, since get_colltype_from_mat_name reads the last
+        # 0x... in the name.
+        scope = getattr(bin_handler, "model_scope", None)
         blender_materials = []
         for binjo_mat in bin_handler.model_object.mat_list:
 
-            mat = bpy.data.materials.get(binjo_mat.name) or bpy.data.materials.new(binjo_mat.name)
+            mat_name = f"{scope}:{binjo_mat.name}" if scope else binjo_mat.name
+            mat = bpy.data.materials.get(mat_name) or bpy.data.materials.new(mat_name)
             set_mat_to_default(mat)
             # assign the parsed Tex after defaulting the mat
             tex_node = mat.node_tree.nodes["TEX"]
             tex_node.image = binjo_mat.Blender_IMG
+            # every parsed image starts out named "tmp", and is saved to the
+            # export path under that name, so models overwrote each other's
+            # files on disk as well
+            if (tex_node.image is not None and scope):
+                tex_node.image.name = f"{scope}_{binjo_mat.img_alias}"
             # RDP clamp/mirror flags of the tile this material was drawn with -
             # leaving Blender's default REPEAT tiles the texture over any face
             # whose UVs run past [0,1]

@@ -1,7 +1,24 @@
 
+import os
+import re
+
 from . import binjo_utils
 from . import binjo_model_LU
 from . binjo_model_bin import ModelBIN
+
+
+# Material names that come out of the parser are only unique within one model
+# file (they are texture offsets into that file), so the importer prefixes them
+# with the model they came from. For anything pulled out of the ROM that is the
+# decomp asset uid, unique across maps and objects alike; maps are keyed by a
+# local index that sits 0x146A below theirs (see binjo_model_LU).
+MAP_ASSET_UID_BASE = 0x146A
+
+def _scope_from_lookup_key(key, uid_base=0):
+    match = re.match(r'\((0x[0-9A-Fa-f]+)\)', key)
+    if (match is None):
+        return re.sub(r'[^0-9a-z]+', '-', key.lower()).strip('-')[:24] or "model"
+    return f"{uid_base + int(match.group(1), 16):04X}"
 
 
 
@@ -12,6 +29,8 @@ class BINjo_ModelBIN_Handler:
         self.ROM_name = rom_filename
         self.ROM_data = None
         self.model_object = None
+        # which model model_object was built from, see _scope_from_lookup_key
+        self.model_scope = None
 
         if (rom_filename is None):
             return
@@ -38,6 +57,7 @@ class BINjo_ModelBIN_Handler:
             print("Cancelling Model instantiation...")
             return
 
+        self.model_scope = _scope_from_lookup_key(model_filename, MAP_ASSET_UID_BASE)
         self.model_object = ModelBIN()
         self.model_object.populate_from_data(model_file_data)
         self.model_object.arrange_mesh_data()
@@ -52,6 +72,7 @@ class BINjo_ModelBIN_Handler:
             print("Cancelling Model instantiation...")
             return
 
+        self.model_scope = _scope_from_lookup_key(model_filename)
         self.model_object = ModelBIN()
         self.model_object.populate_from_data(model_file_data)
         self.model_object.arrange_mesh_data()
@@ -69,6 +90,10 @@ class BINjo_ModelBIN_Handler:
             print("Cancelling Model instantiation...")
             return
 
+        # lower-cased so a file name can never contain the INVIS / NOCOLL markers
+        # the importer searches material names for
+        stem = os.path.splitext(os.path.basename(bin_filename))[0]
+        self.model_scope = re.sub(r'[^0-9a-z]+', '-', stem.lower()).strip('-')[:24] or "bin"
         self.model_object = ModelBIN()
         self.model_object.populate_from_data(model_file_data)
         self.model_object.arrange_mesh_data()
