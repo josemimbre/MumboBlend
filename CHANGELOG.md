@@ -23,13 +23,14 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Changed
 
-- Map names now come from the decomp's asset enum. 53 were vague or plain wrong
-  - `0x42` was labelled "MM - Termite Hill" but is Spiral Mountain's Ticker's
-  Tower, and most of Gruntilda's Lair was numbered floors rather than named
-  rooms. The old `A`/`B` suffixes turn out to have meant OPA/XLU: every level
-  ships as two model files, the opaque bulk and a small translucent one (water,
-  glass, cobwebs), so the translucent halves now say so. The 8 entries that are
-  empty slots in the ROM are marked as such.
+- Map names now come from the decomp, checked against its own level table
+  (`core2/mapModel.c`). 53 were vague or plain wrong: most of Gruntilda's Lair
+  was numbered floors rather than named rooms, and `0xA5`/`0xA9` ("GL - First
+  Cutscene Inside" / "GL - Floor 9") are the Dingpot room. The old `A`/`B`
+  suffixes turn out to have meant OPA/XLU: every level ships as two model files,
+  the opaque bulk and a small translucent one (water, glass, cobwebs), so the
+  translucent halves now say so. The 8 entries that are empty slots in the ROM
+  are marked as such.
 
 ### Fixed
 

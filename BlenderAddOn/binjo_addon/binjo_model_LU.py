@@ -24,6 +24,12 @@
 # no drawn geometry at all, and neither the decomp nor that table names or uses it. The
 # 'Dark Room' half of its label is inherited guesswork, kept because it is the only lead
 # anyone has ever had on it.
+#
+# Where the decomp's asset names and its level table disagree, core2/mapModel.c wins: the
+# asset enum mislabels some zones. It calls 0x42/0x43 SM_TICKERS_TOWER, but the map, jiggy
+# and Mumbo token enums all put Ticker's Tower in MM; and it files 0xA5/0xA9 as the
+# CS_KLUNGOS_LAB cutscene, while the level table loads them for MAP_93_GL_DINGPOT, the
+# playable Lair room (the machine-room cutscenes reuse 0xA5).
 map_model_lookup = {
     "(0x00) Unknown 01 - empty in ROM":               (0x5D93D0, 0x101E8),
     "(0x01) TTC - Treasure Trove Cove":               (0x5D93D0, 0x101F0),
@@ -91,8 +97,8 @@ map_model_lookup = {
     "(0x3F) CS - Beach Ending":                       (0x7796E0, 0x103E0),
     "(0x40) MM - Mumbo's Mountain":                   (0x77CF08, 0x103E8),
     "(0x41) MM - Mumbo's Mountain (translucent)":     (0x7A2148, 0x103F0),
-    "(0x42) SM - Ticker's Tower":                     (0x7A5AF8, 0x103F8),
-    "(0x43) SM - Ticker's Tower (translucent)":       (0x7AB908, 0x10400),
+    "(0x42) MM - Ticker's Tower":                     (0x7A5AF8, 0x103F8),
+    "(0x43) MM - Ticker's Tower (translucent)":       (0x7AB908, 0x10400),
     "(0x44) Mumbo's Skull":                           (0x7AC9A8, 0x10408),
     "(0x45) Unknown 04 - empty in ROM":               (0x7BC388, 0x10410),
     "(0x46) RBB - Rusty Bucket Bay":                  (0x7BC388, 0x10418),
@@ -143,7 +149,7 @@ map_model_lookup = {
     "(0x73) CCW - Wasp Hive":                         (0xA422D8, 0x10580),
     "(0x74) CCW - Nabnut's House":                    (0xA4D040, 0x10588),
     "(0x75) CCW - Whiplash Room":                     (0xA55A18, 0x10590),
-    "(0x76) CCW - Honeycomb Room":                    (0xA5CA20, 0x10598),
+    "(0x76) CCW - Winter Honeycomb Room":             (0xA5CA20, 0x10598),
     "(0x77) CCW - Nabnut's Attic 2":                  (0xA63548, 0x105A0),
     "(0x78) CCW - Nabnut's Attic 2 (translucent)":    (0xA674B8, 0x105A8),
     "(0x79) CCW - Hub (translucent)":                 (0xA68620, 0x105B0),
@@ -190,11 +196,11 @@ map_model_lookup = {
     "(0xA2) GL - TTC and CC Puzzle (translucent)":    (0xCEC988, 0x106F8),
     "(0xA3) GL - Red Cauldron Room (translucent)":    (0xCED148, 0x10700),
     "(0xA4) GL - Statue Room (translucent)":          (0xCEF058, 0x10708),
-    "(0xA5) CS - Klungo's Lab":                       (0xCF14B0, 0x10710),
+    "(0xA5) GL - Dingpot":                            (0xCF14B0, 0x10710),
     "(0xA6) GL - 180 Note Door (translucent)":        (0xD18F30, 0x10718),
     "(0xA7) GL - BGS Lobby (translucent)":            (0xD1ADF8, 0x10720),
     "(0xA8) GL - TTC Lobby (translucent)":            (0xD1DDE8, 0x10728),
-    "(0xA9) CS - Klungo's Lab (translucent)":         (0xD202A0, 0x10730),
+    "(0xA9) GL - Dingpot (translucent)":              (0xD202A0, 0x10730),
     "(0xAA) GL - FF Entrance (translucent)":          (0xD212E0, 0x10738),
     "(0xAB) GL - Battlements (translucent)":          (0xD22888, 0x10740),
 }
