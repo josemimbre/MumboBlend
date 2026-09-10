@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "binjo_addon"
-version = "0.3.0"
+version = "0.3.1"
 name = "BINjo-Kazooie"
 tagline = "Import and export Banjo-Kazooie Model BIN files"
 maintainer = "josemimbre <11147737+josemimbre@users.noreply.github.com>"

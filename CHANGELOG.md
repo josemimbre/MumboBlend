@@ -10,6 +10,8 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-10
+
 ### Changed
 
 - Object and animation names were reviewed against the decomp's own code, not
