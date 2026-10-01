@@ -1,6 +1,7 @@
 
 
 import os
+import re
 import json
 import numpy as np
 from timeit import default_timer as timer
@@ -8,6 +9,7 @@ from timeit import default_timer as timer
 from . import binjo_utils
 from . import binjo_model_LU
 from . import binjo_animation
+from . import binjo_setup
 from . binjo_model_bin import ModelBIN
 from . binjo_bin_handler import BINjo_ModelBIN_Handler
 from . binjo_dicts import Dicts
@@ -230,6 +232,16 @@ class BINJO_Properties(bpy.types.PropertyGroup):
         ),
         default = True
     )
+    setup_map_id : bpy.props.IntProperty(
+        name="Map ID",
+        description=(
+            "Map whose setup file Import Map Exits reads (enum map_e in the decomp: "
+            "Spiral Mountain is 1). Not the model number in the map list"
+        ),
+        default=1,
+        min=1,
+        max=0xA0,
+    )
     weld_seams : bpy.props.BoolProperty(
         name="Weld Seams",
         description=(
@@ -342,6 +354,11 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row.prop(context.scene.binjo_props, "weld_seams")
         row = layout.row()
         row.prop(context.scene.binjo_props, "show_selector_defaults")
+
+        # where the player enters the map, read from its setup file
+        row = layout.row()
+        row.prop(context.scene.binjo_props, "setup_map_id")
+        row.operator("conversion.import_map_exits")
 
         # import a non-map object (character/prop/enemy, ...) from ROM
         layout.split()
@@ -1716,6 +1733,79 @@ class BINJO_OT_dump_images(bpy.types.Operator):
 
 
 
+# Adds an empty for each point the player can enter the map through (the
+# exits warps name), read from the map's setup file - see binjo_setup. Each
+# "Exit_0xNN" sits where the player spawns, with a child "Exit_0xNN_Facing"
+# one unit away in the direction they face, so an engine importing the FBX
+# gets both through the same coordinate conversion as the level, whatever
+# that conversion is.
+class BINJO_OT_import_map_exits(bpy.types.Operator):
+    """Import the map's entry points (exits) from its setup file as empties"""
+    bl_idname = "conversion.import_map_exits"
+    bl_label = "Import Map Exits"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.binjo_props
+        if (not os.path.isfile(props.rom_path)):
+            self.report({'ERROR'}, "Set the Source ROM first !")
+            return {'CANCELLED'}
+
+        with open(props.rom_path, mode="rb") as rom_file:
+            rom_data = rom_file.read()
+
+        setup_data = binjo_setup.extract_setup(rom_data, props.setup_map_id)
+        if (setup_data is None):
+            self.report({'ERROR'}, f"No setup file for map {binjo_utils.to_decal_hex(props.setup_map_id, 2)} !")
+            return {'CANCELLED'}
+
+        exits = binjo_setup.find_exits(binjo_setup.read_node_props(setup_data))
+        if (not exits):
+            self.report({'WARNING'}, "This map's setup file has no exits.")
+            return {'CANCELLED'}
+
+        collection = bpy.data.collections.get("import_Exits")
+        if (collection is None):
+            collection = bpy.data.collections.new("import_Exits")
+            context.scene.collection.children.link(collection)
+
+        scale = props.scale_factor
+        for (exit_id, node) in sorted(exits.items()):
+            name = f"Exit_{binjo_utils.to_decal_hex(exit_id, 1)}"
+            for old_name in (name, f"{name}_Facing"):
+                old = bpy.data.objects.get(old_name)
+                if (old is not None):
+                    bpy.data.objects.remove(old)
+
+            (x, y, z) = node["position"]
+            exit_obj = bpy.data.objects.new(name, None)
+            exit_obj.empty_display_type = 'SINGLE_ARROW'
+            # same (x, -z, y) swap as every vertex, see arrange_mesh_data
+            exit_obj.location = (x / scale, -z / scale, y / scale)
+            exit_obj["binjo_exit_id"] = exit_id
+            exit_obj["binjo_actor_id"] = node["actor_id"]
+            exit_obj["binjo_yaw"] = node["yaw"]
+            collection.objects.link(exit_obj)
+
+            # the game faces (sin(yaw), 0, cos(yaw)) (func_80256D0C, core1/ml.c),
+            # which the same swap turns into (sin, -cos, 0)
+            yaw = np.radians(node["yaw"])
+            facing_obj = bpy.data.objects.new(f"{name}_Facing", None)
+            facing_obj.empty_display_size = 0.25
+            facing_obj.parent = exit_obj
+            facing_obj.location = (float(np.sin(yaw)), float(-np.cos(yaw)), 0.0)
+            collection.objects.link(facing_obj)
+
+            # added to the selection, so an FBX export of the selected level
+            # takes them along instead of quietly leaving them out
+            exit_obj.select_set(True)
+            facing_obj.select_set(True)
+
+        self.report({'INFO'}, f"Imported {len(exits)} exits.")
+        return {'FINISHED'}
+
+
+
 # Writes what the import learnt about each material from the model's display
 # list - cull mode, how it blends, whether it cuts out - next to an FBX export.
 # FBX carries none of it, so an engine importing the FBX (Unity, say) would
@@ -1810,7 +1900,9 @@ def get_material_data(mat, mesh_effects=()):
         coll_type = ModelBIN_ColSeg.get_colltype_from_mat_name(mat.name)
 
     return {
-        "texture": image.name if image is not None else None,
+        # without the ".004" Blender appends when the same image is imported
+        # again into one .blend; the saved PNG never carries it
+        "texture": re.sub(r"\.\d{3}$", "", image.name) if image is not None else None,
         # RDP clamp/mirror of the tile: REPEAT, EXTEND (clamp) or MIRROR
         "textureExtension": tex_node.extension if tex_node is not None else None,
         "visible": not mat.get("Visibility_Disabled", "INVIS" in mat.name),
@@ -2325,6 +2417,7 @@ classes = [
     BINJO_OT_export_to_BIN,
     BINJO_OT_dump_images,
     BINJO_OT_export_material_data,
+    BINJO_OT_import_map_exits,
     BINJO_OT_change_mat_img,
     BINJO_OT_shade_selected_verts,
     BINJO_OT_shade_selected_faces,

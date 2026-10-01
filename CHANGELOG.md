@@ -12,6 +12,14 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Added
 
+- **Import Map Exits** (next to a **Map ID** field in the Import / Export
+  panel) reads the map's setup file from the ROM and adds an empty for every
+  point the player can enter it through: `Exit_0xNN`, where the game spawns
+  the player for exit `NN`, with a child `Exit_0xNN_Facing` one unit away in
+  the direction they face. Exported with the level, an engine gets them
+  through the same coordinate conversion as the geometry. The setup reader
+  (`binjo_setup.py`) only goes as far as the placements for now.
+
 - **Export Material Data** button in the Import / Export panel. It writes a JSON
   file with what the import learnt about each material of the selected
   objects: texture, whether it is drawn on both sides, how it blends
@@ -20,7 +28,9 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
   an FBX export for an engine to read back. `meshEffects` lists the mesh ids
   found on each material's vertices, and `depthWrite` whether the game writes
   depth when drawing it: the opaque half of a map does even for its blended
-  materials, the translucent half never does.
+  materials, the translucent half never does. Texture names are written
+  without the `.001`-style suffix Blender adds when a level is imported again
+  into the same file, so they match the saved PNGs.
 - The mesh list (header offset `0x24`, called `FX_offset` here and
   `mesh_list_offset` in the decomp) is read on import: the vertex groups the
   game animates by id after loading a map - scrolling waterfalls, wobbling
