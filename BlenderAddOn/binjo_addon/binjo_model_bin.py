@@ -9,6 +9,7 @@ from . binjo_model_bin_collision_seg import ModelBIN_ColSeg, ModelBIN_TriElem
 from . binjo_model_bin_displaylist_seg import ModelBIN_DLSeg, TileDescriptor
 from . binjo_model_bin_geolayout_seg import ModelBIN_GeoSeg
 from . binjo_model_bin_unk28_seg import ModelBIN_Unk28Seg
+from . binjo_model_bin_mesh_seg import ModelBIN_MeshSeg
 
 from timeit import default_timer as timer
 
@@ -31,7 +32,8 @@ class ModelBIN:
         self.BoneSeg = ModelBIN_BoneSeg()
         self.ColSeg = ModelBIN_ColSeg()
         self.DLSeg  = ModelBIN_DLSeg()
-        # FX
+        # FX (the mesh list: vertex groups the game animates by id)
+        self.MeshSeg = ModelBIN_MeshSeg()
         # FX_END
         # AnimTex
         self.GeoSeg = ModelBIN_GeoSeg()
@@ -60,7 +62,8 @@ class ModelBIN:
         self.DLSeg.populate_from_data(bin_data, self.Header.DL_offset)
         populate_timer = binjo_utils.report_time(populate_timer, "DL Segment Populated")
 
-        # FX
+        self.MeshSeg.populate_from_data(bin_data, self.Header.FX_offset)
+        populate_timer = binjo_utils.report_time(populate_timer, "Mesh-List (FX) Segment Populated")
         # FX_END
         # AnimTex
 
@@ -372,6 +375,16 @@ class ModelBIN:
         # than hiding the wrong side.
         cull = (geomode & Dicts.RSP_GEOMODE_FLAGS["G_CULL_BOTH"])
         matching_tri.cull_backface = (cull == Dicts.RSP_GEOMODE_FLAGS["G_CULL_BACK"])
+        # how far one unit of raw S/T moves the Blender UV, the same factors
+        # calc_transformed_UVs applies. Mesh effects shift raw S/T directly
+        # (texture scroll), so their speed has to go through these too.
+        if (tile_descriptor is not None and tile_descriptor.tex_idx is not None):
+            matching_tri.uv_per_st = (
+                tile_descriptor.S_scale / 32.0 / tile_descriptor.tex_width,
+                tile_descriptor.T_scale / 32.0 / tile_descriptor.tex_height,
+            )
+        else:
+            matching_tri.uv_per_st = None
         matching_tri.vtx_1.calc_transformed_UVs(tile_descriptor)
         matching_tri.vtx_2.calc_transformed_UVs(tile_descriptor)
         matching_tri.vtx_3.calc_transformed_UVs(tile_descriptor)

@@ -1,6 +1,7 @@
 
 
 import os
+import json
 import numpy as np
 from timeit import default_timer as timer
 
@@ -21,7 +22,7 @@ from . binjo_model_bin_geolayout_seg import ModelBIN_GeoSeg
 import bpy
 import bmesh
 from mathutils import Matrix, Vector
-from bpy_extras.io_utils import ImportHelper
+from bpy_extras.io_utils import ImportHelper, ExportHelper
 from bpy.app.handlers import persistent
 # https://docs.blender.org/api/current/bpy_types_enum_items/operator_return_items.html
 # https://docs.blender.org/api/current/bpy_types_enum_items/wm_report_items.html#rna-enum-wm-report-items
@@ -377,6 +378,10 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row.operator("conversion.to_bin")
         row = layout.row()
         row.prop(context.scene.binjo_props, "force_model_A")
+
+        # render settings for engines that import the FBX export
+        row = layout.row()
+        row.operator("conversion.export_material_data")
 
 blender_icons_dict = {
     'NONE': 0, 'QUESTION': 1, 'ERROR': 2, 'CANCEL': 3, 'TRIA_RIGHT': 4,
@@ -958,6 +963,40 @@ def weld_coincident_vertices(mesh_obj):
     bpy.context.view_layer.objects.active = prev_active
 
 
+# The game animates some vertex groups by mesh id (see binjo_model_bin_mesh_seg):
+# water, scrolling waterfalls, flickering lights. FBX has no place for that,
+# but it does carry every UV layer, so it goes into a second one, "BK_MeshFX",
+# read by whatever imports the FBX (in Unity, the second UV channel):
+#
+#    U  the mesh id, 0 for vertices in no mesh
+#    V  the effect's parameter, already in the units an engine needs:
+#         101-199 scroll: V speed in UV units per second. The game adds
+#                 (id - 100) * 64 to the raw T coordinate each second, which
+#                 goes through the tile's scale and size like any other UV.
+#         300-399 water:  bobbing height in Blender units, (id - 300) game
+#                 units divided by the import scale factor.
+#         others:         id minus its range's base, as the game passes it.
+def add_mesh_fx_layer(obj, tri_list, uid_by_vertex, scale_factor):
+    fx_layer = obj.data.uv_layers.new(name="BK_MeshFX")
+
+    def fx_for(vtx_index, tri):
+        uid = uid_by_vertex.get(vtx_index, 0)
+        if (101 <= uid < 200):
+            uv_per_st = getattr(tri, "uv_per_st", None)
+            speed = (uid - 100) * 64.0 * uv_per_st[1] if (uv_per_st is not None) else 0.0
+            return (float(uid), speed)
+        if (300 <= uid < 400):
+            return (float(uid), (uid - 300) / scale_factor)
+        if (uid > 0):
+            return (float(uid), float(uid % 100))
+        return (0.0, 0.0)
+
+    for (face, tri) in zip(obj.data.polygons, tri_list):
+        fx_layer.data[face.loop_indices[0]].uv = fx_for(tri.index_1, tri)
+        fx_layer.data[face.loop_indices[1]].uv = fx_for(tri.index_2, tri)
+        fx_layer.data[face.loop_indices[2]].uv = fx_for(tri.index_3, tri)
+
+
 def remove_orphan_loose_vertices(mesh_obj):
     mesh = mesh_obj.data
     bm = bmesh.new()
@@ -975,12 +1014,16 @@ def remove_orphan_loose_vertices(mesh_obj):
 # ones the bone/pinning tables use; the vertices no face refers to are dropped
 # afterwards by remove_orphan_loose_vertices. The material list is likewise
 # shared whole, so tri.mat_index stays valid across every object.
-def build_mesh_object_from_tris(name, tri_list, vertices, blender_materials, highlight_invis):
+def build_mesh_object_from_tris(name, tri_list, vertices, blender_materials, highlight_invis, uid_by_vertex=None, scale_factor=1.0):
     mesh = bpy.data.meshes.new(f"{name}_Mesh")
     obj = bpy.data.objects.new(name, mesh)
     mesh.from_pydata(vertices, [], [(t.index_1, t.index_2, t.index_3) for t in tri_list])
 
     UV_layer = obj.data.uv_layers.new(name="import_UV")
+    if (uid_by_vertex):
+        add_mesh_fx_layer(obj, tri_list, uid_by_vertex, scale_factor)
+        # the new layer must not become the one Blender draws and exports first
+        obj.data.uv_layers.active = UV_layer
     col_attr = mesh.attributes.new(name='import_Color', domain='CORNER', type='BYTE_COLOR')
     for mat in blender_materials:
         obj.data.materials.append(mat)
@@ -1122,9 +1165,12 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             tris_by_variant.setdefault(tri.variant, []).append(tri)
 
         highlight_invis = context.scene.binjo_props.highlight_invis
+        uid_by_vertex = bin_handler.model_object.MeshSeg.uid_by_vertex
+        scale_factor = context.scene.binjo_props.scale_factor
         new_obj = build_mesh_object_from_tris(
             "import_Object", tris_by_variant.get(None, []),
-            vertices, blender_materials, highlight_invis
+            vertices, blender_materials, highlight_invis,
+            uid_by_vertex, scale_factor
         )
         scene.collection.objects.link(new_obj)
 
@@ -1136,7 +1182,8 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             for key in variant_keys:
                 variant_obj = build_mesh_object_from_tris(
                     f"import_{key}", tris_by_variant[key],
-                    vertices, blender_materials, highlight_invis
+                    vertices, blender_materials, highlight_invis,
+                    uid_by_vertex, scale_factor
                 )
                 variant_coll.objects.link(variant_obj)
                 variant_objs.append(variant_obj)
@@ -1619,6 +1666,134 @@ class BINJO_OT_dump_images(bpy.types.Operator):
             return { 'CANCELLED' }
         bin_handler.dump_image_files_to(path=path)
         return {'FINISHED'}
+
+
+
+# Writes what the import learnt about each material from the model's display
+# list - cull mode, how it blends, whether it cuts out - next to an FBX export.
+# FBX carries none of it, so an engine importing the FBX (Unity, say) would
+# otherwise draw everything opaque and one-sided. One entry per material of
+# the selected objects, or of every object when nothing is selected.
+class BINJO_OT_export_material_data(bpy.types.Operator, ExportHelper):
+    """Export each material's render settings (culling, blending, cutout) and collision flags to a JSON file, to go with an FBX export"""
+    bl_idname = "conversion.export_material_data"
+    bl_label = "Export Material Data"
+    bl_options = {'REGISTER'}
+
+    filename_ext = ".json"
+    filter_glob: bpy.props.StringProperty(default="*.json", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        # name it after the active object, which is usually what the FBX was
+        # named after too; ExportHelper would use the .blend's name instead
+        if (context.active_object is not None):
+            self.filepath = bpy.path.clean_name(context.active_object.name) + self.filename_ext
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        objects = context.selected_objects or context.scene.objects
+        materials = {}
+        skipped = set()
+        mesh_fx_ids = {}
+        for obj in objects:
+            if (obj.type != 'MESH'):
+                continue
+            collect_mesh_fx_ids(obj, mesh_fx_ids)
+            for slot in obj.material_slots:
+                if (slot.material is None):
+                    continue
+                # only BINjo materials (imported, created or converted in the
+                # material panel) know their render settings; a stray default
+                # "Material" would only add noise to the file
+                if ("Collision_Flags" in slot.material):
+                    materials[slot.material.name] = slot.material
+                else:
+                    skipped.add(slot.material.name)
+        if (skipped):
+            self.report({'WARNING'}, f"Skipped {len(skipped)} non-BINjo materials: {', '.join(sorted(skipped))}")
+
+        if (not materials):
+            self.report({'ERROR'}, "No materials found on the selected objects !")
+            return {'CANCELLED'}
+
+        data = {
+            "binjoVersion": version_num,
+            "materials": {
+                name: get_material_data(mat, sorted(mesh_fx_ids.get(name, ())))
+                for name, mat in sorted(materials.items())
+            },
+        }
+        with open(self.filepath, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=2)
+
+        self.report({'INFO'}, f"Wrote {len(materials)} materials to {self.filepath}")
+        return {'FINISHED'}
+
+
+
+# The mesh ids (BK_MeshFX layer, see add_mesh_fx_layer) found on each
+# material's faces, so an engine can tell which materials get their effects
+# from the vertices and stop applying any set by hand.
+def collect_mesh_fx_ids(obj, mesh_fx_ids):
+    fx_layer = obj.data.uv_layers.get("BK_MeshFX")
+    if (fx_layer is None):
+        return
+    for face in obj.data.polygons:
+        if (face.material_index >= len(obj.material_slots)):
+            continue
+        mat = obj.material_slots[face.material_index].material
+        if (mat is None):
+            continue
+        for loop_index in face.loop_indices:
+            uid = int(round(fx_layer.data[loop_index].uv[0]))
+            if (uid > 0):
+                mesh_fx_ids.setdefault(mat.name, set()).add(uid)
+
+
+
+def get_material_data(mat, mesh_effects=()):
+    tex_node = mat.node_tree.nodes.get("TEX") if mat.use_nodes else None
+    image = tex_node.image if tex_node is not None else None
+
+    # user-edited flags live in the custom properties; a material that never
+    # went through the import or the material panel only has its name
+    if ("Collision_Disabled" in mat and "Collision_Flags" in mat and "Collision_SFX" in mat):
+        coll_type = ModelBIN_ColSeg.get_colltype_from_mat(mat)
+    else:
+        coll_type = ModelBIN_ColSeg.get_colltype_from_mat_name(mat.name)
+
+    return {
+        "texture": image.name if image is not None else None,
+        # RDP clamp/mirror of the tile: REPEAT, EXTEND (clamp) or MIRROR
+        "textureExtension": tex_node.extension if tex_node is not None else None,
+        "visible": not mat.get("Visibility_Disabled", "INVIS" in mat.name),
+        "doubleSided": not mat.use_backface_culling,
+        "render": get_material_render_mode(mat),
+        "collision": coll_type is not None,
+        "collisionFlags": binjo_utils.to_decal_hex(coll_type, 4) if coll_type is not None else None,
+        # mesh ids on this material's vertices (empty when none)
+        "meshEffects": list(mesh_effects),
+    }
+
+
+
+# Reads back what apply_render_mode decided, in engine-neutral terms:
+#   "translucent"  blends with what is behind it (XLU draws)
+#   "clip"         hard cutout at half alpha (G_AC_THRESHOLD)
+#   "opaque"       alpha is ignored altogether
+#   "dithered"     carries alpha but neither of the above (coverage-based
+#                  AA_OPA, or unknown); a cutout is the closest engine match
+def get_material_render_mode(mat):
+    if (getattr(mat, "surface_render_method", None) == "BLENDED" or getattr(mat, "blend_method", None) == "BLEND"):
+        return "translucent"
+    if (not mat.use_nodes):
+        return "opaque"
+    if (mat.node_tree.nodes.get("ALPHA_CLIP") is not None):
+        return "clip"
+    principled = mat.node_tree.nodes.get("Principled BSDF")
+    if (principled is None or not principled.inputs["Alpha"].links):
+        return "opaque"
+    return "dithered"
         
 
 
@@ -2099,6 +2274,7 @@ classes = [
     BINJO_OT_import_from_BIN,
     BINJO_OT_export_to_BIN,
     BINJO_OT_dump_images,
+    BINJO_OT_export_material_data,
     BINJO_OT_change_mat_img,
     BINJO_OT_shade_selected_verts,
     BINJO_OT_shade_selected_faces,

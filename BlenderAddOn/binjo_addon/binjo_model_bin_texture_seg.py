@@ -181,7 +181,11 @@ class ModelBIN_TexElem:
         # model A/B on it.
         self.has_alpha_texels = bool((self.color_pixels[..., 3] < 255).any())
 
-        self.Blender_IMG = bpy.data.images.new("tmp", width=self.width, height=self.height)
+        # alpha=True: images.new defaults to an image without an alpha
+        # channel, and saving it (by hand, or when exporting to FBX with the
+        # textures copied) writes an RGB PNG, dropping every transparent texel
+        # decoded above.
+        self.Blender_IMG = bpy.data.images.new("tmp", width=self.width, height=self.height, alpha=True)
         self.Blender_IMG.file_format = 'PNG'
         # Blenders bpy.data.images expects the RGBA values to range inbetween (0.0, 1.0) instead of (0, 255)
         blender_pixels = [float(val / 255.0) for val in self.color_pixels.flatten()]

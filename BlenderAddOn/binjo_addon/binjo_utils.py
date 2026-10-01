@@ -156,7 +156,8 @@ def create_IMG_from_bytes(pixel_data, w, h):
     try:
         if ("bpy" not in sys.modules):
             import bpy
-        IMG = bpy.data.images.new("tmp", width=w, height=h)
+        # alpha=True, or the image is saved as RGB and loses its transparency
+        IMG = bpy.data.images.new("tmp", width=w, height=h, alpha=True)
         IMG.pixels = pixel_data
         return IMG
     except ImportError:

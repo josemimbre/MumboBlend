@@ -10,6 +10,30 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ## [Unreleased]
 
+### Added
+
+- **Export Material Data** button in the Import / Export panel. It writes a JSON
+  file with what the import learnt about each material of the selected
+  objects: texture, whether it is drawn on both sides, how it blends
+  (`opaque`, `clip`, `dithered` or `translucent`), whether it is visible, and
+  its collision flags. FBX carries none of this, so it is meant to go next to
+  an FBX export for an engine to read back. `meshEffects` lists the mesh ids
+  found on each material's vertices.
+- The mesh list (header offset `0x24`, called `FX_offset` here and
+  `mesh_list_offset` in the decomp) is read on import: the vertex groups the
+  game animates by id after loading a map - scrolling waterfalls, wobbling
+  water, flickering lights. Each imported mesh gets a second UV layer,
+  `BK_MeshFX`, with the id in U and the effect's parameter in V (scroll speed
+  in UV per second, water bobbing height in Blender units), so it survives an
+  FBX export. Read-only for now: exporting to BIN does not write it back.
+
+### Fixed
+
+- Imported textures keep their transparency when saved. Their Blender images
+  were created without an alpha channel, so saving them, by hand or by
+  exporting to FBX with the textures copied, wrote RGB PNGs and dropped every
+  transparent texel: grass, fences and leaves came out as solid blocks.
+
 ## [0.3.1] - 2026-09-10
 
 ### Changed
