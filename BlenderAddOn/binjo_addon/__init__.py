@@ -950,14 +950,57 @@ def apply_vertex_pinning(mesh_obj, armature_obj, bone_seg, unk28_seg, scale_fact
 # (F3DContext.createMesh -> bpy.ops.mesh.remove_doubles, on by default), and
 # like there this has to run AFTER the vertex groups exist, so the survivor
 # inherits them, and after anything that indexes raw BIN vertex numbers.
+# Merges vertices that sit at the same spot, closing the UV/shading seams the
+# model splits its vertices along.
+#
+# Some faces overlap another face exactly, on vertices of their own: the back
+# of a two-sided fence, rope or net (the same triangle facing the other way),
+# or a second texture layered over the first. Merging their vertices made the
+# two faces share all three, and Blender keeps only one face per set of
+# vertices - 56 tris lost in SM's translucent model alone, the rope posts
+# entirely. So the vertices of overlapping faces are left unwelded; every
+# other coincident vertex still merges.
+#
+# The merge itself stays the edit-mode operator: it averages the vertex group
+# weights of the vertices it merges, which is what keeps an animated joint
+# closed. bmesh.ops.weld_verts and bmesh.ops.remove_doubles keep only one
+# vertex's weights. It merges the selected vertices only, so the overlapping
+# faces' vertices are simply left unselected.
 def weld_coincident_vertices(mesh_obj):
+    mesh = mesh_obj.data
+
+    # positions come from integer game coordinates divided by the scale
+    # factor, so coincident vertices compare equal after rounding
+    spots = [tuple(round(c, 5) for c in vert.co) for vert in mesh.vertices]
+
+    faces_by_spots = {}
+    for face in mesh.polygons:
+        faces_by_spots.setdefault(frozenset(spots[v] for v in face.vertices), []).append(face)
+
+    protected = set()
+    for faces in faces_by_spots.values():
+        if (len(faces) > 1):
+            for face in faces:
+                protected.update(face.vertices)
+
+    for vert in mesh.vertices:
+        vert.select = (vert.index not in protected)
+    for edge in mesh.edges:
+        edge.select = False
+    for face in mesh.polygons:
+        face.select = False
+
+    tool_settings = bpy.context.scene.tool_settings
+    prev_select_mode = tuple(tool_settings.mesh_select_mode)
     prev_active = bpy.context.view_layer.objects.active
     prev_mode = mesh_obj.mode
     bpy.context.view_layer.objects.active = mesh_obj
     bpy.ops.object.mode_set(mode='EDIT')
-    bpy.ops.mesh.select_all(action='SELECT')
+    # vertex mode, so the selection is exactly the vertices picked above
+    tool_settings.mesh_select_mode = (True, False, False)
     bpy.ops.mesh.remove_doubles()
     bpy.ops.object.mode_set(mode='OBJECT')
+    tool_settings.mesh_select_mode = prev_select_mode
     if (prev_mode != 'OBJECT'):
         bpy.ops.object.mode_set(mode=prev_mode)
     bpy.context.view_layer.objects.active = prev_active
@@ -1152,6 +1195,10 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
                 initial_value=ModelBIN_ColSeg.get_colltype_from_mat_name(mat.name)
             )
             mat["Collision_SFX"] = ModelBIN_ColSeg.get_SFX_from_mat_name(mat.name)
+            # whether the game writes depth when drawing it (see
+            # BINjo_ModelBIN_Handler.model_writes_depth); Blender has no use
+            # for it, but Export Material Data passes it on
+            mat["Depth_Write"] = getattr(bin_handler, "model_writes_depth", True)
 
             # and add it to the mat-list
             blender_materials.append(mat)
@@ -1769,6 +1816,9 @@ def get_material_data(mat, mesh_effects=()):
         "visible": not mat.get("Visibility_Disabled", "INVIS" in mat.name),
         "doubleSided": not mat.use_backface_culling,
         "render": get_material_render_mode(mat),
+        # also for blended materials: the opaque half of a map writes depth
+        # even for those; only the translucent half doesn't
+        "depthWrite": bool(mat.get("Depth_Write", True)),
         "collision": coll_type is not None,
         "collisionFlags": binjo_utils.to_decal_hex(coll_type, 4) if coll_type is not None else None,
         # mesh ids on this material's vertices (empty when none)

@@ -18,7 +18,9 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
   (`opaque`, `clip`, `dithered` or `translucent`), whether it is visible, and
   its collision flags. FBX carries none of this, so it is meant to go next to
   an FBX export for an engine to read back. `meshEffects` lists the mesh ids
-  found on each material's vertices.
+  found on each material's vertices, and `depthWrite` whether the game writes
+  depth when drawing it: the opaque half of a map does even for its blended
+  materials, the translucent half never does.
 - The mesh list (header offset `0x24`, called `FX_offset` here and
   `mesh_list_offset` in the decomp) is read on import: the vertex groups the
   game animates by id after loading a map - scrolling waterfalls, wobbling
@@ -29,6 +31,14 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Fixed
 
+- **Weld Seams** no longer deletes faces. Two-sided fences, ropes and nets
+  are modelled with a second set of triangles facing the other way on their
+  own vertices, and some surfaces layer a second texture over the first;
+  welding gave those faces the same vertices as the ones they overlap, and
+  Blender keeps only one face per set of vertices. Spiral Mountain's
+  translucent model lost 56 of its 413 tris (fences turned see-through from
+  behind, the rope posts vanished). Vertices of overlapping faces are now
+  left unwelded; every other seam still closes.
 - Imported textures keep their transparency when saved. Their Blender images
   were created without an alpha channel, so saving them, by hand or by
   exporting to FBX with the textures copied, wrote RGB PNGs and dropped every

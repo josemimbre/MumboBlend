@@ -31,6 +31,13 @@ class BINjo_ModelBIN_Handler:
         self.model_object = None
         # which model model_object was built from, see _scope_from_lookup_key
         self.model_scope = None
+        # A map comes as an opaque model and a translucent one, and the game
+        # draws them differently (mapModel.c): the opaque one with full depth,
+        # so even its blended draws write depth (renderModesFullDepth* in
+        # modelRender.c), and the translucent one depth-tested only, writing
+        # nothing. Only that second case is False; objects draw with full
+        # depth too.
+        self.model_writes_depth = True
 
         if (rom_filename is None):
             return
@@ -58,6 +65,8 @@ class BINjo_ModelBIN_Handler:
             return
 
         self.model_scope = _scope_from_lookup_key(model_filename, MAP_ASSET_UID_BASE)
+        # binjo_model_LU names the translucent half of each map "(translucent)"
+        self.model_writes_depth = ("(translucent)" not in model_filename)
         self.model_object = ModelBIN()
         self.model_object.populate_from_data(model_file_data)
         self.model_object.arrange_mesh_data()
@@ -73,6 +82,7 @@ class BINjo_ModelBIN_Handler:
             return
 
         self.model_scope = _scope_from_lookup_key(model_filename)
+        self.model_writes_depth = True
         self.model_object = ModelBIN()
         self.model_object.populate_from_data(model_file_data)
         self.model_object.arrange_mesh_data()
@@ -94,6 +104,8 @@ class BINjo_ModelBIN_Handler:
         # the importer searches material names for
         stem = os.path.splitext(os.path.basename(bin_filename))[0]
         self.model_scope = re.sub(r'[^0-9a-z]+', '-', stem.lower()).strip('-')[:24] or "bin"
+        # a loose .bin doesn't say which half of a map it is
+        self.model_writes_depth = True
         self.model_object = ModelBIN()
         self.model_object.populate_from_data(model_file_data)
         self.model_object.arrange_mesh_data()
