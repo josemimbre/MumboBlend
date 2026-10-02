@@ -39,6 +39,15 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
   in UV per second, water bobbing height in Blender units), so it survives an
   FBX export. Read-only for now: exporting to BIN does not write it back.
 
+### Changed
+
+- A selector variant nested inside another's branch is named after the
+  whole path, `import_sel10_0-sel36_0-sel20_1`, instead of only its own
+  selector. The game only reaches a nested selector while every branch
+  above it is drawn (Kazooie's Turbo Trainers sit inside her bare feet,
+  inside her legs), and the plain name lost that, so an engine showing the
+  variants had her shoes floating on their own.
+
 ### Fixed
 
 - **Weld Seams** no longer deletes faces. Two-sided fences, ropes and nets
@@ -48,7 +57,10 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
   Blender keeps only one face per set of vertices. Spiral Mountain's
   translucent model lost 56 of its 413 tris (fences turned see-through from
   behind, the rope posts vanished). Vertices of overlapping faces are now
-  left unwelded; every other seam still closes.
+  left unwelded; every other seam still closes. On a rigged model they take
+  the bone weights a merge would have given them, so they still follow their
+  joints: Kazooie's wings, two-sided throughout, came apart at every joint
+  when animated.
 - Imported textures keep their transparency when saved. Their Blender images
   were created without an alpha channel, so saving them, by hand or by
   exporting to FBX with the textures copied, wrote RGB PNGs and dropped every

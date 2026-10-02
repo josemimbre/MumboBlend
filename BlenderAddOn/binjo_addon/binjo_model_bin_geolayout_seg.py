@@ -258,6 +258,14 @@ class ModelBIN_GeoSeg:
                 # plain on/off switch, since drawing its only child
                 # unconditionally would make the command pointless. It stays
                 # hidden either way.
+                #
+                # Selectors nest: a branch can hold further selectors, which
+                # the game only reaches while that branch is drawn. Banjo's
+                # sel10 (Kazooie's legs) holds sel36/37 (bare feet or Wading
+                # Boots), whose bare-feet branch holds sel20/21 (shoes or
+                # Turbo Trainers). A nested variant's key starts with its
+                # parents' ("sel10_0-sel36_0-sel20_1"), so whatever drives the
+                # selectors later can hide a whole branch with what is inside.
                 child_cnt = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
                 selector_id = binjo_utils.read_bytes(file_data, offset + 0x0A, 2)
                 shows_default = (child_cnt > 1) and (
@@ -269,6 +277,8 @@ class ModelBIN_GeoSeg:
                         if (idx == 0 and shows_default):
                             # a nested selector inside a variant keeps the outer tag
                             child_key = variant_key
+                        elif (variant_key is not None):
+                            child_key = f"{variant_key}-sel{selector_id}_{idx}"
                         else:
                             child_key = f"sel{selector_id}_{idx}"
                         self._walk(file_data, offset + child_offset, bone_stack, is_excluded, child_key)

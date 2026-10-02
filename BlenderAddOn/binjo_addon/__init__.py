@@ -978,6 +978,13 @@ def apply_vertex_pinning(mesh_obj, armature_obj, bone_seg, unk28_seg, scale_fact
 # entirely. So the vertices of overlapping faces are left unwelded; every
 # other coincident vertex still merges.
 #
+# Left at that, a two-sided part made only of overlapping faces never closed
+# its joints: Kazooie's wings (Banjo's selector 9) are front and back on every
+# triangle, so none of their vertices welded and the wing segments came apart
+# when animated. The unwelded vertices now take the average weights of every
+# vertex at their spot, the same average a merge would have given them, so
+# they follow the joint like a welded vertex while staying apart.
+#
 # The merge itself stays the edit-mode operator: it averages the vertex group
 # weights of the vertices it merges, which is what keeps an animated joint
 # closed. bmesh.ops.weld_verts and bmesh.ops.remove_doubles keep only one
@@ -1000,6 +1007,23 @@ def weld_coincident_vertices(mesh_obj):
             for face in faces:
                 protected.update(face.vertices)
 
+    # what a merge of everything at each spot would give, worked out before
+    # the merge changes the vertex numbering, for the spots that keep a
+    # protected vertex
+    shared_weights = {}
+    if (protected and len(mesh_obj.vertex_groups) > 0):
+        verts_by_spot = {}
+        for vert in mesh.vertices:
+            verts_by_spot.setdefault(spots[vert.index], []).append(vert)
+        for (spot, verts) in verts_by_spot.items():
+            if (len(verts) < 2 or not any(vert.index in protected for vert in verts)):
+                continue
+            totals = {}
+            for vert in verts:
+                for group in vert.groups:
+                    totals[group.group] = totals.get(group.group, 0.0) + group.weight
+            shared_weights[spot] = {index: total / len(verts) for (index, total) in totals.items()}
+
     for vert in mesh.vertices:
         vert.select = (vert.index not in protected)
     for edge in mesh.edges:
@@ -1017,6 +1041,19 @@ def weld_coincident_vertices(mesh_obj):
     tool_settings.mesh_select_mode = (True, False, False)
     bpy.ops.mesh.remove_doubles()
     bpy.ops.object.mode_set(mode='OBJECT')
+
+    # merging doesn't move anything, so the spots still find their vertices
+    if (shared_weights):
+        vertex_groups = mesh_obj.vertex_groups
+        for vert in mesh.vertices:
+            weights = shared_weights.get(tuple(round(c, 5) for c in vert.co))
+            if (weights is None):
+                continue
+            for index in [group.group for group in vert.groups]:
+                vertex_groups[index].remove([vert.index])
+            for (index, weight) in weights.items():
+                vertex_groups[index].add([vert.index], weight, 'REPLACE')
+
     tool_settings.mesh_select_mode = prev_select_mode
     if (prev_mode != 'OBJECT'):
         bpy.ops.object.mode_set(mode=prev_mode)
