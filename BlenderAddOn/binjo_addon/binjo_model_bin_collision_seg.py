@@ -276,6 +276,7 @@ class ModelBIN_TriElem:
         self.visible        = False
         self.lit            = False
         self.tex_extension  = 'REPEAT'
+        self.tex_extension_st = ('REPEAT', 'REPEAT')
         self.variant        = None
         self.cull_backface  = True
         self.tex_gen        = False
@@ -304,6 +305,7 @@ class ModelBIN_TriElem:
         self.visible        = (tex_id is not None)
         self.lit            = False
         self.tex_extension  = 'REPEAT'
+        self.tex_extension_st = ('REPEAT', 'REPEAT')
         self.variant        = None
         self.cull_backface  = True
         self.tex_gen        = False

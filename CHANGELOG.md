@@ -50,6 +50,15 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Fixed
 
+- Textures that clamp on one axis and repeat on the other are drawn as the
+  game draws them. The RDP sets clamp and mirror per axis, but Blender's
+  Image Texture node has one mode for both, and the import used EXTEND
+  whenever either axis clamped. Banjo's house walls in Spiral Mountain clamp
+  vertically and repeat along the wall, so their edge texels were smeared
+  into stripes. The node now clamps (or repeats) and the other axis is
+  folded with a FRACT or PINGPONG node on the UVs. The modes are kept on the
+  material, and Export Material Data writes them as `textureExtensionU` and
+  `textureExtensionV`, next to the old single `textureExtension`.
 - **Weld Seams** no longer deletes faces. Two-sided fences, ropes and nets
   are modelled with a second set of triangles facing the other way on their
   own vertices, and some surfaces layer a second texture over the first;

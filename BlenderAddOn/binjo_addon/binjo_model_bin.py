@@ -357,6 +357,7 @@ class ModelBIN:
         # can avoid misreading that data as color/alpha.
         matching_tri.lit = bool(geomode & Dicts.RSP_GEOMODE_FLAGS["G_LIGHTING"])
         matching_tri.tex_extension = tile_descriptor.get_blender_extension()
+        matching_tri.tex_extension_st = tile_descriptor.get_axis_extensions()
         matching_tri.combiner = combiner
         # how the RDP blends this draw (opaque / coverage-modulated / translucent)
         # and whether it clips against the alpha threshold; both come from state
@@ -435,6 +436,7 @@ class ModelBIN:
                 # the naming scheme - take the mode of whichever tri opens the
                 # material, which covers the normal case of consistent use
                 mat.tex_extension = tri.tex_extension
+                mat.tex_extension_st = tri.tex_extension_st
                 mat.cull_backface = tri.cull_backface
                 mat.tex_gen = tri.tex_gen
                 mat.combiner = tri.combiner
@@ -479,6 +481,8 @@ class BinjoMaterial:
         self.coll_encoding = coll_encoding
         self.name = f"{img_alias}_{coll_encoding}"
         self.tex_extension = 'REPEAT'
+        # per axis (S, T); see TileDescriptor.get_axis_extensions
+        self.tex_extension_st = ('REPEAT', 'REPEAT')
         self.cull_backface = True
         self.tex_gen = False
         self.combiner = 0

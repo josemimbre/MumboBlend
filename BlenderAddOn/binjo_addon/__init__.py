@@ -1230,6 +1230,7 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             # with, rather than assuming every surface culls its back faces
             mat.use_backface_culling = binjo_mat.cull_backface
             apply_texture_gen(mat, binjo_mat.tex_gen)
+            apply_texture_wrap(mat, *binjo_mat.tex_extension_st)
             # untextured mats have to bypass the mixers, see apply_texture_bypass
             apply_texture_bypass(mat, binjo_mat.combiner)
             # and how the RDP blended those draws decides how Blender should
@@ -1940,8 +1941,12 @@ def get_material_data(mat, mesh_effects=()):
         # without the ".004" Blender appends when the same image is imported
         # again into one .blend; the saved PNG never carries it
         "texture": re.sub(r"\.\d{3}$", "", image.name) if image is not None else None,
-        # RDP clamp/mirror of the tile: REPEAT, EXTEND (clamp) or MIRROR
+        # RDP clamp/mirror of the tile: REPEAT, EXTEND (clamp) or MIRROR. The
+        # single value is the Blender node's (EXTEND when either axis clamps),
+        # kept for older readers; U and V are each axis's own mode
         "textureExtension": tex_node.extension if tex_node is not None else None,
+        "textureExtensionU": mat.get("Texture_Extension_S", tex_node.extension if tex_node is not None else None),
+        "textureExtensionV": mat.get("Texture_Extension_T", tex_node.extension if tex_node is not None else None),
         "visible": not mat.get("Visibility_Disabled", "INVIS" in mat.name),
         "doubleSided": not mat.use_backface_culling,
         "render": get_material_render_mode(mat),
@@ -2177,6 +2182,74 @@ def apply_texture_gen(mat, tex_gen):
         coord_node.name = "TEXGEN_COORD"
         coord_node.location = (tex_node.location[0] - 200, tex_node.location[1])
     links.new(coord_node.outputs["Normal"], tex_node.inputs["Vector"])
+
+
+# The RDP clamps, mirrors or wraps each texture axis on its own, but an Image
+# Texture node has one extension mode for both. When the axes differ (Banjo's
+# house walls clamp T and wrap S), the node is set to EXTEND, or REPEAT if
+# nothing clamps, and the other axis is folded into [0,1] before the lookup:
+# FRACT repeats, PINGPONG mirrors. The modes are also kept on the material
+# ("Texture_Extension_S" / "_T") for Export Material Data, since the node no
+# longer tells them apart.
+# Call after apply_texture_gen: generated coordinates are left alone.
+UV_WRAP_NODES = ("UV_WRAP_UV", "UV_WRAP_SPLIT", "UV_WRAP_S", "UV_WRAP_T", "UV_WRAP_JOIN")
+
+
+def apply_texture_wrap(mat, extension_s, extension_t):
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    tex_node = nodes.get("TEX")
+    if (tex_node is None):
+        return
+
+    mat["Texture_Extension_S"] = extension_s
+    mat["Texture_Extension_T"] = extension_t
+
+    for name in UV_WRAP_NODES:
+        node = nodes.get(name)
+        if (node is not None):
+            nodes.remove(node)
+
+    if (extension_s == extension_t):
+        tex_node.extension = extension_s
+        return
+    if (nodes.get("TEXGEN_COORD") is not None):
+        # environment-mapped: the coordinates come from the normal, not from
+        # UVs that could run past the texture
+        return
+
+    clamps = ('EXTEND' in (extension_s, extension_t))
+    tex_node.extension = 'EXTEND' if clamps else 'REPEAT'
+
+    x, y = tex_node.location
+    uv_node = nodes.new("ShaderNodeUVMap")
+    uv_node.name = "UV_WRAP_UV"
+    uv_node.location = (x - 800, y)
+    split_node = nodes.new("ShaderNodeSeparateXYZ")
+    split_node.name = "UV_WRAP_SPLIT"
+    split_node.location = (x - 600, y)
+    join_node = nodes.new("ShaderNodeCombineXYZ")
+    join_node.name = "UV_WRAP_JOIN"
+    join_node.location = (x - 200, y)
+    links.new(uv_node.outputs["UV"], split_node.inputs["Vector"])
+    links.new(join_node.outputs["Vector"], tex_node.inputs["Vector"])
+
+    for (axis, extension, offset) in (("X", extension_s, 80), ("Y", extension_t, -80)):
+        operation = None
+        if (extension == 'MIRROR'):
+            operation = 'PINGPONG'
+        elif (extension == 'REPEAT' and clamps):
+            operation = 'FRACT'
+        if (operation is None):
+            links.new(split_node.outputs[axis], join_node.inputs[axis])
+            continue
+        math_node = nodes.new("ShaderNodeMath")
+        math_node.name = "UV_WRAP_S" if axis == "X" else "UV_WRAP_T"
+        math_node.operation = operation
+        math_node.inputs[1].default_value = 1.0
+        math_node.location = (x - 400, y + offset)
+        links.new(split_node.outputs[axis], math_node.inputs[0])
+        links.new(math_node.outputs[0], join_node.inputs[axis])
 
 
 # An Image Texture node with no image assigned outputs black with alpha 0, so

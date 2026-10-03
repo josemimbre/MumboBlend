@@ -441,6 +441,26 @@ class TileDescriptor:
             return 'EXTEND'
         return 'REPEAT'
 
+    # The same per axis (S is U, T is V), which is what the RDP really does.
+    # Many tiles clamp only one way - Banjo's house walls clamp T and wrap S,
+    # so their planks repeat along the wall - and collapsing the pair to
+    # EXTEND smeared the edge texels across every face running past [0,1].
+    # Mirror wins over clamp as above: with both bits set the RDP mirrors
+    # inside the clamp range, and the clamp range here is the texture.
+    @staticmethod
+    def _axis_extension(clamp, mirror):
+        if (mirror):
+            return 'MIRROR'
+        if (clamp):
+            return 'EXTEND'
+        return 'REPEAT'
+
+    def get_axis_extensions(self):
+        return (
+            TileDescriptor._axis_extension(self.S_clamp, self.S_mirror),
+            TileDescriptor._axis_extension(self.T_clamp, self.T_mirror),
+        )
+
 
 
 class ModelBIN_DLSeg:
