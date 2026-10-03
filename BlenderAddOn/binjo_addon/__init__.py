@@ -10,6 +10,7 @@ from . import binjo_utils
 from . import binjo_model_LU
 from . import binjo_animation
 from . import binjo_setup
+from . import binjo_names
 from . binjo_model_bin import ModelBIN
 from . binjo_bin_handler import BINjo_ModelBIN_Handler
 from . binjo_dicts import Dicts
@@ -359,6 +360,8 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row = layout.row()
         row.prop(context.scene.binjo_props, "setup_map_id")
         row.operator("conversion.import_map_exits")
+        row = layout.row()
+        row.operator("conversion.import_map_objects")
 
         # import a non-map object (character/prop/enemy, ...) from ROM
         layout.split()
@@ -1843,6 +1846,247 @@ class BINJO_OT_import_map_exits(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# Adds an empty for everything the map's setup file places, to see what a
+# level holds besides its geometry - see binjo_setup. One collection per kind,
+# under "import_MapObjects":
+#    Actors   NodeProps of the actor category: characters, enemies,
+#             collectables, puzzle pieces... "A_<actor id>_<name>"
+#    Models   static model props (trees, bins...): "M_<asset>_<name>"
+#    Sprites  sprite props (weeds, flowers...): "S_<asset>_<name>"
+#    Nodes    the other NodeProps: camera and warp triggers, enemy
+#             boundaries, paths, flags. "N<category>_<id>"; hidden, as
+#             a level has hundreds and they mean little on their own
+# Names come from the decomp (binjo_names). Every empty keeps the raw values
+# as custom properties, and faces local -Y, the way the models face here: the
+# game turns things by yaw about its up axis, which the (x, -z, y) swap makes
+# a turn about Blender's Z. Model props add roll on top (modelRender_draw ->
+# func_80252AF0, core1/mlmtx.c: yaw, then pitch, then roll).
+# Not selected, so an FBX export of the selected level leaves them out.
+NODE_CATEGORY_NAMES = {
+    2: "warp/trigger", 3: "camera controller", 6: "actor", 7: "enemy boundary",
+    8: "path", 9: "camera trigger", 10: "flag",
+}
+
+
+class BINJO_OT_import_map_objects(bpy.types.Operator):
+    """Import everything the map's setup file places (actors, model and sprite props, triggers) as empties"""
+    bl_idname = "conversion.import_map_objects"
+    bl_label = "Import Map Objects"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        props = context.scene.binjo_props
+        if (not os.path.isfile(props.rom_path)):
+            self.report({'ERROR'}, "Set the Source ROM first !")
+            return {'CANCELLED'}
+
+        with open(props.rom_path, mode="rb") as rom_file:
+            rom_data = rom_file.read()
+
+        setup_data = binjo_setup.extract_setup(rom_data, props.setup_map_id)
+        if (setup_data is None):
+            self.report({'ERROR'}, f"No setup file for map {binjo_utils.to_decal_hex(props.setup_map_id, 2)} !")
+            return {'CANCELLED'}
+
+        objects = binjo_setup.read_setup_objects(setup_data)
+
+        root = bpy.data.collections.get("import_MapObjects")
+        if (root is None):
+            root = bpy.data.collections.new("import_MapObjects")
+            context.scene.collection.children.link(root)
+        collections = {}
+        for kind in ("Actors", "Models", "Sprites", "Nodes"):
+            name = f"import_MapObjects_{kind}"
+            coll = bpy.data.collections.get(name)
+            if (coll is None):
+                coll = bpy.data.collections.new(name)
+                root.children.link(coll)
+            # importing again replaces what an earlier import placed
+            for obj in list(coll.objects):
+                bpy.data.objects.remove(obj)
+            collections[kind] = coll
+        collections["Nodes"].hide_viewport = True
+
+        scale = props.scale_factor
+        counts = {kind: 0 for kind in collections}
+
+        def place(kind, name, position, yaw=0, roll=0, size=1.0, display='ARROWS'):
+            (x, y, z) = position
+            obj = bpy.data.objects.new(name, None)
+            obj.empty_display_type = display
+            obj.empty_display_size = 0.5 * size
+            # same (x, -z, y) swap as every vertex, see arrange_mesh_data
+            obj.location = (x / scale, -z / scale, y / scale)
+            obj.matrix_world = (
+                Matrix.Translation(obj.location) @
+                Matrix.Rotation(np.radians(yaw), 4, 'Z') @
+                Matrix.Rotation(-np.radians(roll), 4, 'Y')
+            )
+            collections[kind].objects.link(obj)
+            counts[kind] += 1
+            return obj
+
+        for node in objects["nodes"]:
+            actor_id = node["actor_id"]
+            if (node["category"] == binjo_setup.CATEGORY_ACTOR):
+                label = binjo_names.ACTOR_NAMES.get(actor_id, "UNNAMED")
+                obj = place("Actors", f"A_{actor_id:03X}_{label}", node["position"], yaw=node["yaw"])
+            else:
+                obj = place("Nodes", f"N{node['category']:X}_{actor_id:03X}", node["position"], display='PLAIN_AXES')
+                obj["binjo_category_name"] = NODE_CATEGORY_NAMES.get(node["category"], "unknown")
+            obj["binjo_category"] = node["category"]
+            obj["binjo_actor_id"] = actor_id
+            obj["binjo_yaw"] = node["yaw"]
+            obj["binjo_scale"] = node["scale"]
+            obj["binjo_selector"] = node["selector"]
+            obj["binjo_marker_id"] = node["marker_id"]
+
+        for prop in objects["props"]:
+            asset_id = prop["asset_id"]
+            label = binjo_names.ASSET_NAMES.get(asset_id, "UNNAMED")
+            if (prop["kind"] == "model"):
+                obj = place(
+                    "Models", f"M_{asset_id:03X}_{label}", prop["position"],
+                    yaw=prop["yaw"], roll=prop["roll"], size=prop["scale"], display='CUBE'
+                )
+                obj["binjo_yaw"] = prop["yaw"]
+                obj["binjo_roll"] = prop["roll"]
+            else:
+                obj = place("Sprites", f"S_{asset_id:03X}_{label}", prop["position"], size=prop["scale"], display='SPHERE')
+                obj["binjo_frame"] = prop["frame"]
+                obj["binjo_mirrored"] = prop["mirrored"]
+            obj["binjo_asset_id"] = asset_id
+            obj["binjo_scale"] = prop["scale"]
+
+        placed_models = placed_actors = 0
+        if (self.place_models):
+            placed_models = self.instance_models(
+                context, root, collections["Models"],
+                lambda empty: (empty["binjo_asset_id"], empty["binjo_scale"])
+            )
+        if (self.place_actors):
+            placed_actors = self.instance_models(
+                context, root, collections["Actors"],
+                lambda empty: (binjo_names.ACTOR_MODELS.get(empty["binjo_actor_id"]), 1.0)
+            )
+
+        self.report(
+            {'INFO'},
+            f"Imported {counts['Actors']} actors ({placed_actors} with their model), "
+            f"{counts['Models']} models ({placed_models} with their geometry), "
+            f"{counts['Sprites']} sprites and {counts['Nodes']} other nodes (hidden)."
+        )
+        return {'FINISHED'}
+
+    place_models : bpy.props.BoolProperty(
+        name="Place Models",
+        description="Import each static model prop's model once and show it at every empty that places it",
+        default=True,
+    )
+    place_actors : bpy.props.BoolProperty(
+        name="Place Actors",
+        description="Show each actor with the model its ActorInfo draws it with, imported once per model",
+        default=True,
+    )
+
+    # Every model the placed things use is imported once, through Import
+    # Object from ROM, into its own collection under
+    # "import_MapObjects_Library", which is excluded from the view layer so
+    # it doesn't also show at the origin. The empties then instance that
+    # collection: the geometry exists once, and each empty keeps its
+    # placement and custom properties.
+    #
+    # model_of(empty) gives (asset id or None, scale). Model props carry
+    # their asset and scale. Actors only carry an actor id: the model is the
+    # one their ActorInfo names (binjo_names.ACTOR_MODELS, from the decomp),
+    # in the rest pose and default variant, as the actor's code may pick
+    # another; their setup scale is kept as a property but not applied,
+    # because what it means isn't clear yet (most are 100, a few 1 or 37).
+    # Returns how many empties got a model.
+    def instance_models(self, context, root, empties, model_of):
+        library = bpy.data.collections.get("import_MapObjects_Library")
+        if (library is None):
+            library = bpy.data.collections.new("import_MapObjects_Library")
+            root.children.link(library)
+
+        lookup_by_asset = {}
+        for key in binjo_model_LU.object_model_lookup:
+            match = re.match(r"\(0x([0-9A-Fa-f]+)\)", key)
+            if (match):
+                lookup_by_asset[int(match.group(1), 16)] = key
+
+        props = context.scene.binjo_props
+        previous_object = props.object_filename_enum
+        by_asset = {}
+        placed = 0
+
+        for empty in empties.objects:
+            (asset_id, scale) = model_of(empty)
+            if (asset_id is None):
+                continue
+            empty["binjo_model_id"] = asset_id
+            if (asset_id not in by_asset):
+                by_asset[asset_id] = self.import_model(context, library, asset_id, lookup_by_asset.get(asset_id))
+            source = by_asset[asset_id]
+            if (source is None):
+                continue
+            empty.instance_type = 'COLLECTION'
+            empty.instance_collection = source
+            empty.scale = (scale,) * 3
+            placed += 1
+
+        props.object_filename_enum = previous_object
+        _exclude_from_view_layer(context.view_layer.layer_collection, library)
+        return placed
+
+    def import_model(self, context, library, asset_id, lookup_key):
+        label = binjo_names.ASSET_NAMES.get(asset_id, "UNNAMED")
+        name = f"MapModel_{asset_id:03X}_{label}"
+        existing = bpy.data.collections.get(name)
+        if (existing is not None):
+            # an earlier import already has it
+            return existing
+        if (lookup_key is None):
+            self.report({'WARNING'}, f"Model {asset_id:#05x} is not in the object list, left as an empty.")
+            return None
+
+        objects_before = set(bpy.data.objects)
+        collections_before = set(bpy.data.collections)
+        context.scene.binjo_props.object_filename_enum = lookup_key
+        if (bpy.ops.conversion.object_from_rom() != {'FINISHED'}):
+            self.report({'WARNING'}, f"Could not import model {asset_id:#05x}, left as an empty.")
+            return None
+
+        collection = bpy.data.collections.new(name)
+        library.children.link(collection)
+        for obj in set(bpy.data.objects) - objects_before:
+            # selector variants (eyelids, held props, alternative parts)
+            # would all draw at once in an instance; only the default
+            # appearance shows, the variants stay in the library hidden
+            hidden = obj.hide_get()
+            for owner in list(obj.users_collection):
+                owner.objects.unlink(obj)
+            collection.objects.link(obj)
+            part = re.sub(r"^import_|\.\d{3}$", "", obj.name)
+            obj.name = f"{name}_{part}"
+            obj.select_set(False)
+            if (hidden or part.startswith("sel")):
+                obj.hide_viewport = True
+                obj.hide_render = True
+        # the import's own collections (its variants) are empty now
+        for extra in set(bpy.data.collections) - collections_before - {collection}:
+            if (not extra.objects and not extra.children):
+                bpy.data.collections.remove(extra)
+        return collection
+
+
+def _exclude_from_view_layer(layer_collection, collection):
+    if (layer_collection.collection == collection):
+        layer_collection.exclude = True
+        return True
+    return any(_exclude_from_view_layer(child, collection) for child in layer_collection.children)
+
+
 
 # Writes what the import learnt about each material from the model's display
 # list - cull mode, how it blends, whether it cuts out - next to an FBX export.
@@ -1866,7 +2110,7 @@ class BINJO_OT_export_material_data(bpy.types.Operator, ExportHelper):
         return super().invoke(context, event)
 
     def execute(self, context):
-        objects = context.selected_objects or context.scene.objects
+        objects = with_instanced_objects(context.selected_objects or context.scene.objects)
         materials = {}
         skipped = set()
         mesh_fx_ids = {}
@@ -1909,6 +2153,29 @@ class BINJO_OT_export_material_data(bpy.types.Operator, ExportHelper):
 # The mesh ids (BK_MeshFX layer, see add_mesh_fx_layer) found on each
 # material's faces, so an engine can tell which materials get their effects
 # from the vertices and stop applying any set by hand.
+# The objects plus whatever their collection instances draw: Import Map
+# Objects places each model prop as an empty instancing a collection, so
+# selecting the empty selects no mesh, while an FBX export of the selection
+# still writes the instanced meshes and needs their materials. Each object
+# once, in a stable order.
+def with_instanced_objects(objects):
+    result = []
+    seen = set()
+
+    def add(obj):
+        if (obj.name in seen):
+            return
+        seen.add(obj.name)
+        result.append(obj)
+        if (obj.instance_type == 'COLLECTION' and obj.instance_collection is not None):
+            for inner in obj.instance_collection.all_objects:
+                add(inner)
+
+    for obj in objects:
+        add(obj)
+    return result
+
+
 def collect_mesh_fx_ids(obj, mesh_fx_ids):
     fx_layer = obj.data.uv_layers.get("BK_MeshFX")
     if (fx_layer is None):
@@ -2528,6 +2795,7 @@ classes = [
     BINJO_OT_dump_images,
     BINJO_OT_export_material_data,
     BINJO_OT_import_map_exits,
+    BINJO_OT_import_map_objects,
     BINJO_OT_change_mat_img,
     BINJO_OT_shade_selected_verts,
     BINJO_OT_shade_selected_faces,

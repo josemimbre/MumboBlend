@@ -12,6 +12,28 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Added
 
+- **Import Map Objects** (under Import Map Exits) adds an empty for
+  everything the map's setup file places: actors (characters, enemies,
+  collectables), static model props (trees, bins), sprite props (weeds,
+  flowers) and the other nodes (camera and warp triggers, enemy boundaries,
+  paths, flags), each kind in its own collection under `import_MapObjects`,
+  the nodes hidden. They are named after the decomp (`A_<actor>_<name>`,
+  `M_<asset>_<name>`, `S_<asset>_<name>`), keep the raw values as custom
+  properties, and are turned the way the game turns them (yaw, and roll for
+  model props). The names come from a new `binjo_names.py`, generated from
+  the decomp's enums. The setup reader now reads the prop list as well as
+  the NodeProps. With **Place Models** (on by default) every model a prop
+  uses is imported once into `import_MapObjects_Library`, excluded from the
+  view layer, and each `M_` empty instances it at the prop's placement and
+  scale. Export Material Data includes what those empties instance, so a
+  selection holding them writes the props' materials too. **Place Actors**
+  does the same for actors, with the model their `ActorInfo` draws them with:
+  `binjo_names.ACTOR_MODELS`, generated from every `ActorInfo` initialiser in
+  the decomp (563 actors with a model). They show in their rest pose and
+  default appearance (selector variants stay hidden in the library), and
+  their setup scale is kept as a property but not applied, as what it means
+  isn't clear yet.
+
 - **Import Map Exits** (next to a **Map ID** field in the Import / Export
   panel) reads the map's setup file from the ROM and adds an empty for every
   point the player can enter it through: `Exit_0xNN`, where the game spawns

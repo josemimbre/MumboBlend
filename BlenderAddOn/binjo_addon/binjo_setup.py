@@ -88,11 +88,12 @@ def extract_setup(rom_data, map_id):
     )
 
 
-# Every NodeProp in the setup file, as dicts with position, actor_id,
-# category and yaw.
-def read_node_props(setup_data):
+# Everything the setup file places, as two lists of dicts:
+#    "nodes": the NodeProps (actors, warps, camera triggers, paths...)
+#    "props": the Props (static models and sprites)
+def read_setup_objects(setup_data):
     reader = _Reader(setup_data)
-    nodes = []
+    objects = {"nodes": [], "props": []}
 
     while (not reader.expect(0x00)):
         if (reader.expect(0x02)):
@@ -111,28 +112,40 @@ def read_node_props(setup_data):
                 elif (reader.expect(0x02)):
                     reader.words(3)
                 elif (reader.expect(0x03)):
-                    _read_cube(reader, nodes)
+                    _read_cube(reader, objects)
         break
 
-    return nodes
+    return objects
 
 
-def _read_cube(reader, nodes):
+# Every NodeProp in the setup file, as dicts with position, actor_id,
+# category, yaw, scale, selector and marker_id.
+def read_node_props(setup_data):
+    return read_setup_objects(setup_data)["nodes"]
+
+
+def _read_cube(reader, objects):
     if (reader.expect(0x0A)):
         count = reader.byte()
         reader.expect(0x0B)
         blob = reader.raw(count * 20)
         for idx in range(count):
-            x, y, z, bits, actor_id, _marker, _pad, yaw_scale, _flags = struct.unpack(
+            x, y, z, bits, actor_id, marker, _pad, yaw_scale, _flags = struct.unpack(
                 ">hhhHHBBII", blob[idx * 20:(idx + 1) * 20]
             )
-            nodes.append({
+            objects["nodes"].append({
                 "position": (x, y, z),
                 "actor_id": actor_id,
                 "category": (bits >> 1) & 0x3F,
+                # what it holds depends on the category: a selector value
+                # for actors, the radius of a trigger volume for others
+                "selector": bits >> 7,
+                "marker_id": marker,
                 "yaw": yaw_scale >> 23,
+                "scale": yaw_scale & 0x7FFFFF,
             })
     elif (reader.expect(0x06)):
+        # OtherNode (include/prop.h): same size, layout not understood
         count = reader.byte()
         reader.expect(0x07)
         reader.raw(count * 20)
@@ -140,7 +153,44 @@ def _read_cube(reader, nodes):
     if (reader.expect(0x08)):
         count = reader.byte()
         reader.expect(0x09)
-        reader.raw(count * 12)
+        blob = reader.raw(count * 12)
+        for idx in range(count):
+            objects["props"].append(_read_prop(blob[idx * 12:(idx + 1) * 12]))
+
+
+# Prop (include/prop.h), 12 bytes, big-endian. The last byte says which kind:
+# bit 1 isModelProp, bit 0 isActorProp (filled in at run time, never in the
+# file); neither means a sprite.
+#    ModelProp:  u16 modelId:12, pad:4 | u8 yaw | u8 roll | s16 x, y, z |
+#                u8 scale | u8 flags
+#    SpriteProp: u32 spriteId:12, unk:1, rgb_remove r/g/b:3 each, scale:8,
+#                isMirrored:1, pad:1 | s16 x, y, z | u16 frame:5, unk:5, flags
+# Drawn (code_A5BC0.c) with modelId + MODEL_ASSET_OFFSET / spriteId +
+# SPRITE_ASSET_OFFSET as the asset, rotation (0, yaw * 2, roll * 2) degrees
+# and scale / 100.
+MODEL_ASSET_OFFSET = 0x2D1
+SPRITE_ASSET_OFFSET = 0x572
+
+
+def _read_prop(data):
+    head, x, y, z, tail = struct.unpack(">IhhhH", data)
+    if (tail & 0x2):
+        return {
+            "kind": "model",
+            "asset_id": (head >> 20) + MODEL_ASSET_OFFSET,
+            "position": (x, y, z),
+            "yaw": ((head >> 8) & 0xFF) * 2,
+            "roll": (head & 0xFF) * 2,
+            "scale": (tail >> 8) / 100.0,
+        }
+    return {
+        "kind": "sprite",
+        "asset_id": (head >> 20) + SPRITE_ASSET_OFFSET,
+        "position": (x, y, z),
+        "scale": ((head >> 2) & 0xFF) / 100.0,
+        "mirrored": bool((head >> 1) & 0x1),
+        "frame": tail >> 11,
+    }
 
 
 # NodeProp category of placed actors (PROP_1_CATEGORY_6_ACTOR). Other
