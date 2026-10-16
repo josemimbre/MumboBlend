@@ -268,9 +268,12 @@ class ModelBIN_GeoSeg:
                 # selectors later can hide a whole branch with what is inside.
                 child_cnt = binjo_utils.read_bytes(file_data, offset + 0x08, 2)
                 selector_id = binjo_utils.read_bytes(file_data, offset + 0x0A, 2)
-                shows_default = (child_cnt > 1) and (
-                    ModelBIN_GeoSeg.show_selector_defaults or selector_id == 1
-                )
+                # ID 1 is no exception: modelRender_reset raises it to 1, but
+                # actors step it on from there (their blinking eyes,
+                # func_803255FC in code_9E370.c: 1 open to 4 shut), so its
+                # child 0 has to stay apart to be hidden. Whatever drives the
+                # selectors starts ID 1 at 1, which shows it.
+                shows_default = (child_cnt > 1) and ModelBIN_GeoSeg.show_selector_defaults
                 for idx in range(0, child_cnt):
                     child_offset = binjo_utils.read_bytes(file_data, offset + 0x0C + (idx * 4), 4, type="signed")
                     if (child_offset != 0):

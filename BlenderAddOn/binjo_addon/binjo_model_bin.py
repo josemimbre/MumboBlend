@@ -326,6 +326,11 @@ class ModelBIN:
             matching_tri.link_vertex_objects(self.VtxSeg.vtx_list)
             self.complete_tri_list.append(matching_tri)
             matching_tri.variant = variant
+        elif (not matching_tri.visible):
+            # first drawn here, after the collision segment already listed it
+            # (Quarrie's eyes are solid too): the drawing says which SELECTOR
+            # variant it belongs to, which the collision tri can't know
+            matching_tri.variant = variant
         elif (variant is None):
             # reached again through the default appearance - that wins, so a tri
             # shared between the default and a variant stays in the main mesh

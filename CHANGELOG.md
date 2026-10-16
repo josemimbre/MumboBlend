@@ -12,6 +12,21 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Added
 
+- Names for entries the lists had as unknown, from what the decomp does with
+  them: **(0x04F0) Topper Leaf** and **(0x04F1) Bawl Leaf** (the leaves that fly
+  off when they die), **(0x07CF) Transition Circle** (the circle transition
+  between maps), and the animations **(0x0223) Topper Hop**, **(0x0224) Topper
+  Die**, **(0x0225) Collywobble Float**, **(0x0226) Bawl Hop**, **(0x0227) Bawl
+  Die** and **(0x02B9) Rock Trapping Grunty**.
+- **Smooth Normals** (on by default, with a **Smooth Angle** of 60 degrees)
+  gives the faces drawn without G_LIGHTING smooth normals by angle. Those
+  faces have no normal in the BIN, so they came in flat; the game never
+  needed one, lighting them with the colour painted into their vertices, but
+  real-time lighting in an engine does, and every triangle of a hill lit
+  differently. Corners are matched by position, so the smoothing crosses
+  unwelded seams too, and faces with a G_LIGHTING normal keep it. Which
+  faces those are is kept as a `binjo_lit` face attribute.
+
 - **Import Map Objects** (under Import Map Exits) adds an empty for
   everything the map's setup file places: actors (characters, enemies,
   collectables), static model props (trees, bins), sprite props (weeds,
@@ -33,6 +48,14 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
   default appearance (selector variants stay hidden in the library), and
   their setup scale is kept as a property but not applied, as what it means
   isn't clear yet.
+- **Export Map Objects** writes the actors Import Map Objects placed to a
+  `.actors.json`, for an engine to place its own versions of them apart from
+  the level's FBX: actor id and name, model, position in game units, yaw,
+  and the raw scale, selector and marker id. The scene's exits go in too, in
+  the same units, so the engine can line its conversion up with the
+  `Exit_0xNN` empties that came in through the level's FBX. The empties of
+  Import Map Exits and Import Map Objects now keep their position in game
+  units (`binjo_position`) for it.
 
 - **Import Map Exits** (next to a **Map ID** field in the Import / Export
   panel) reads the map's setup file from the ROM and adds an empty for every
@@ -72,6 +95,16 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Fixed
 
+- SELECTOR variants that are also part of the model's collision are split off
+  like any other. The collision triangles are listed first, with no variant,
+  and the drawn ones were matched to them and kept that, so the variants went
+  into the main mesh: Quarrie's four eye states (selector 1) all came in as one.
+- **Selector 1** follows **Show Selector Defaults** like every other selector.
+  Its first child was always merged into the main mesh, because the game
+  starts it at 1, but actors step it on from there: their blinking eyes go
+  from 1 (open) to 4 (shut), so with the open eyes merged in, the shut ones
+  were drawn on top of them and fought with them. Whatever drives the
+  selectors has to start ID 1 at 1 to show it.
 - Textures that clamp on one axis and repeat on the other are drawn as the
   game draws them. The RDP sets clamp and mirror per axis, but Blender's
   Image Texture node has one mode for both, and the import used EXTEND

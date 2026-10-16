@@ -254,6 +254,23 @@ class BINJO_Properties(bpy.types.PropertyGroup):
         ),
         default = True
     )
+    smooth_normals : bpy.props.BoolProperty(
+        name="Smooth Normals",
+        description=(
+            "Give faces without a normal of their own (all but G_LIGHTING geometry) smooth "
+            "normals by angle instead of flat ones. The game lights them with the colour "
+            "painted into their vertices and never used a normal, but real-time lighting in "
+            "an engine does, and flat normals light every triangle of a hill differently"
+        ),
+        default = True
+    )
+    smooth_angle : bpy.props.FloatProperty(
+        name="Smooth Angle",
+        description="Faces turned by less than this from each other share a smooth normal; sharper corners stay sharp",
+        default=60.0,
+        min=0.0,
+        max=180.0,
+    )
     highlight_invis : bpy.props.BoolProperty(
         name="Highlight INVIS Mats",
         description="Highlight all the INVIS (Collision-Only) Materials in Magenta",
@@ -354,6 +371,9 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row = layout.row()
         row.prop(context.scene.binjo_props, "weld_seams")
         row = layout.row()
+        row.prop(context.scene.binjo_props, "smooth_normals")
+        row.prop(context.scene.binjo_props, "smooth_angle")
+        row = layout.row()
         row.prop(context.scene.binjo_props, "show_selector_defaults")
 
         # where the player enters the map, read from its setup file
@@ -362,6 +382,7 @@ class BINJO_PT_import_export_panel(bpy.types.Panel):
         row.operator("conversion.import_map_exits")
         row = layout.row()
         row.operator("conversion.import_map_objects")
+        row.operator("conversion.export_map_objects")
 
         # import a non-map object (character/prop/enemy, ...) from ROM
         layout.split()
@@ -1179,7 +1200,70 @@ def build_mesh_object_from_tris(name, tri_list, vertices, blender_materials, hig
             mesh.use_auto_smooth = True
         mesh.normals_split_custom_set(loop_normals)
 
+    # which faces carry their own normal, for smooth_unlit_normals after the
+    # welding (a face attribute follows the faces through it)
+    lit_attr = mesh.attributes.new("binjo_lit", 'BOOLEAN', 'FACE')
+    lit_attr.data.foreach_set("value", [bool(tri.lit) for tri in tri_list])
+
     return obj
+
+
+# Faces drawn without G_LIGHTING have no normal in the BIN (those bytes are
+# vertex colour), so they came in with their face's normal: flat. That never
+# showed in the game, which lights them with the colour painted into the
+# vertices, but it does under real-time light, where every triangle of a
+# hill lights differently. Their corners get the average normal of the
+# faces around the same spot that turn by less than angle_deg from theirs,
+# weighted by area, so hills and slopes go smooth and real corners (walls,
+# steps) stay sharp. Corners are matched by position rather than by vertex,
+# so the smoothing also crosses UV and colour seams left unwelded. Faces
+# with a G_LIGHTING normal keep it.
+def smooth_unlit_normals(mesh_obj, angle_deg):
+    mesh = mesh_obj.data
+    if (not mesh.polygons):
+        return
+
+    lit_attr = mesh.attributes.get("binjo_lit")
+    lit = [False] * len(mesh.polygons)
+    if (lit_attr is not None):
+        lit_attr.data.foreach_get("value", lit)
+
+    # the normals the lit faces have now, to hand back unchanged
+    if (bpy.app.version >= (4, 1, 0)):
+        current = [Vector(n.vector) for n in mesh.corner_normals]
+    else:
+        mesh.calc_normals_split()
+        current = [Vector(loop.normal) for loop in mesh.loops]
+
+    def spot(vertex_index):
+        return tuple(round(c, 5) for c in mesh.vertices[vertex_index].co)
+
+    faces_at = {}
+    for face in mesh.polygons:
+        if (lit[face.index]):
+            continue
+        for vertex_index in face.vertices:
+            faces_at.setdefault(spot(vertex_index), []).append(face.index)
+
+    cos_limit = np.cos(np.radians(angle_deg))
+    normals = [None] * len(mesh.loops)
+    for face in mesh.polygons:
+        for (loop_index, vertex_index) in zip(face.loop_indices, face.vertices):
+            if (lit[face.index]):
+                normals[loop_index] = current[loop_index]
+                continue
+            total = Vector((0.0, 0.0, 0.0))
+            for other in faces_at[spot(vertex_index)]:
+                other_face = mesh.polygons[other]
+                if (other_face.normal.dot(face.normal) >= cos_limit):
+                    total += other_face.normal * other_face.area
+            normals[loop_index] = total.normalized() if (total.length > 1e-8) else Vector(face.normal)
+
+    for face in mesh.polygons:
+        face.use_smooth = True
+    if (bpy.app.version < (4, 1, 0)):
+        mesh.use_auto_smooth = True
+    mesh.normals_split_custom_set(normals)
 
 
 class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
@@ -1317,6 +1401,8 @@ class BINJO_OT_create_model_from_bin_handler(bpy.types.Operator):
             remove_orphan_loose_vertices(obj)
             if (context.scene.binjo_props.weld_seams):
                 weld_coincident_vertices(obj)
+            if (context.scene.binjo_props.smooth_normals):
+                smooth_unlit_normals(obj, context.scene.binjo_props.smooth_angle)
 
         # Hidden only now that every object has been through the welding above:
         # that step needs Edit Mode, which Blender refuses on an object sitting
@@ -1826,6 +1912,7 @@ class BINJO_OT_import_map_exits(bpy.types.Operator):
             exit_obj["binjo_exit_id"] = exit_id
             exit_obj["binjo_actor_id"] = node["actor_id"]
             exit_obj["binjo_yaw"] = node["yaw"]
+            exit_obj["binjo_position"] = list(node["position"])
             collection.objects.link(exit_obj)
 
             # the game faces (sin(yaw), 0, cos(yaw)) (func_80256D0C, core1/ml.c),
@@ -1915,6 +2002,8 @@ class BINJO_OT_import_map_objects(bpy.types.Operator):
             obj = bpy.data.objects.new(name, None)
             obj.empty_display_type = display
             obj.empty_display_size = 0.5 * size
+            # in game units, for Export Map Objects (the location is scaled)
+            obj["binjo_position"] = list(position)
             # same (x, -z, y) swap as every vertex, see arrange_mesh_data
             obj.location = (x / scale, -z / scale, y / scale)
             obj.matrix_world = (
@@ -2078,6 +2167,102 @@ class BINJO_OT_import_map_objects(bpy.types.Operator):
             if (not extra.objects and not extra.children):
                 bpy.data.collections.remove(extra)
         return collection
+
+
+# Writes where Import Map Objects placed the actors, for an engine to put its
+# own versions of them there: actors have behaviour, so they are better
+# built and placed by the engine than baked into the level's FBX. One entry
+# per "A_" empty:
+#    actorId, actorName   from the setup file and the decomp
+#    modelId              the model its ActorInfo draws it with, or null
+#    position             in game units, as the setup file has it
+#    yaw                  degrees about the game's up axis; the game faces
+#                         (sin(yaw), 0, cos(yaw))
+#    scale, selector, markerId   raw setup values
+# plus the exits the scene has (import_Exits) in the same units, so the
+# engine can check its conversion against the Exit_0xNN empties that came in
+# through the level's FBX. scaleFactor is the import's: Blender units are
+# game units / scaleFactor.
+class BINJO_OT_export_map_objects(bpy.types.Operator, ExportHelper):
+    """Export the actors placed by Import Map Objects (and the exits) to a JSON file, to place them in an engine apart from the level"""
+    bl_idname = "conversion.export_map_objects"
+    bl_label = "Export Map Objects"
+    bl_options = {'REGISTER'}
+
+    # The file is "<level>.actors.json", which Unity's Place Map Actors looks
+    # for. ExportHelper only knows single extensions (it compares against
+    # what follows the last dot) and kept appending ".actors.json" to a name
+    # that already had it, so the extension here is plain ".json" and the
+    # ".actors" part is added on invoke and made sure of on execute.
+    filename_ext = ".json"
+    filter_glob: bpy.props.StringProperty(default="*.json", options={'HIDDEN'})
+
+    def invoke(self, context, event):
+        name = bpy.path.display_name_from_filepath(bpy.data.filepath) or "map"
+        self.filepath = f"{name}.actors.json"
+        return super().invoke(context, event)
+
+    def execute(self, context):
+        if (not self.filepath.lower().endswith(".actors.json")):
+            self.filepath = re.sub(r"(\.json)?$", ".actors.json", self.filepath, count=1, flags=re.IGNORECASE)
+
+        actors_collection = bpy.data.collections.get("import_MapObjects_Actors")
+        if (actors_collection is None or not actors_collection.objects):
+            self.report({'ERROR'}, "Nothing to export: run Import Map Objects first !")
+            return {'CANCELLED'}
+
+        scale = context.scene.binjo_props.scale_factor
+        actors = []
+        for obj in sorted(actors_collection.objects, key=lambda o: o.name):
+            if ("binjo_actor_id" not in obj):
+                continue
+            actor_id = int(obj["binjo_actor_id"])
+            model_id = obj.get("binjo_model_id")
+            actors.append({
+                "name": obj.name,
+                "actorId": actor_id,
+                "actorName": binjo_names.ACTOR_NAMES.get(actor_id),
+                "modelId": int(model_id) if model_id is not None else None,
+                "position": game_position(obj, scale),
+                "yaw": int(obj["binjo_yaw"]),
+                "scale": int(obj["binjo_scale"]),
+                "selector": int(obj["binjo_selector"]),
+                "markerId": int(obj["binjo_marker_id"]),
+            })
+
+        exits = []
+        exits_collection = bpy.data.collections.get("import_Exits")
+        if (exits_collection is not None):
+            for obj in sorted(exits_collection.objects, key=lambda o: o.name):
+                if ("binjo_exit_id" in obj):
+                    exits.append({
+                        "name": obj.name,
+                        "exitId": int(obj["binjo_exit_id"]),
+                        "position": game_position(obj, scale),
+                        "yaw": int(obj["binjo_yaw"]),
+                    })
+
+        data = {
+            "binjoVersion": version_num,
+            "mapId": context.scene.binjo_props.setup_map_id,
+            "scaleFactor": context.scene.binjo_props.scale_factor,
+            "actors": actors,
+            "exits": exits,
+        }
+        with open(self.filepath, "w", encoding="utf-8") as out:
+            json.dump(data, out, indent=2)
+        self.report({'INFO'}, f"Wrote {len(actors)} actors and {len(exits)} exits to {self.filepath}")
+        return {'FINISHED'}
+
+
+# An empty's position in game units: what the import stored, or, for empties
+# imported before it stored it, undone from the location (the import's
+# (x, -z, y) swap, divided by the scale factor).
+def game_position(obj, scale):
+    if ("binjo_position" in obj):
+        return [int(v) for v in obj["binjo_position"]]
+    (x, y, z) = obj.matrix_world.translation
+    return [round(x * scale), round(z * scale), round(-y * scale)]
 
 
 def _exclude_from_view_layer(layer_collection, collection):
@@ -2796,6 +2981,7 @@ classes = [
     BINJO_OT_export_material_data,
     BINJO_OT_import_map_exits,
     BINJO_OT_import_map_objects,
+    BINJO_OT_export_map_objects,
     BINJO_OT_change_mat_img,
     BINJO_OT_shade_selected_verts,
     BINJO_OT_shade_selected_faces,
