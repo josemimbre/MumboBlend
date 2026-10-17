@@ -12,12 +12,22 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Added
 
+- **Export Map Objects** also writes the sprite props the map's setup file
+  places (flowers, weeds...) under `sprites`, read straight from the ROM:
+  asset id and name, position in game units, scale, mirroring and frame.
+- **Export Material Data** writes `textureGen` for the materials drawn with
+  G_TEXTURE_GEN, whose texture is looked up by the normal as seen from the
+  camera (sphere mapping) rather than by UVs: the shine on honeycombs, jiggies
+  and notes. The import already showed it in Blender; an engine needs to know.
 - Names for entries the lists had as unknown, from what the decomp does with
   them: **(0x04F0) Topper Leaf** and **(0x04F1) Bawl Leaf** (the leaves that fly
   off when they die), **(0x07CF) Transition Circle** (the circle transition
   between maps), and the animations **(0x0223) Topper Hop**, **(0x0224) Topper
   Die**, **(0x0225) Collywobble Float**, **(0x0226) Bawl Hop**, **(0x0227) Bawl
-  Die** and **(0x02B9) Rock Trapping Grunty**.
+  Die** and **(0x02B9) Rock Trapping Grunty**. The pieces Collywobble breaks
+  into are named for what they are: **(0x04F2) Collywobble Large Leaf**,
+  **(0x04F3) Collywobble Small Leaf** and **(0x04F4) Collywobble Floret** (a
+  piece of the head, not the stem, as the decomp's name had it).
 - **Smooth Normals** (on by default, with a **Smooth Angle** of 60 degrees)
   gives the faces drawn without G_LIGHTING smooth normals by angle. Those
   faces have no normal in the BIN, so they came in flat; the game never

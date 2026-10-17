@@ -2242,16 +2242,37 @@ class BINJO_OT_export_map_objects(bpy.types.Operator, ExportHelper):
                         "yaw": int(obj["binjo_yaw"]),
                     })
 
+        # The sprite props (flowers, weeds...) the setup file places, straight
+        # from the ROM: the import doesn't bring them into the scene, but an
+        # engine draws them like the game, as camera-facing sprites.
+        sprites = []
+        props = context.scene.binjo_props
+        if (os.path.isfile(props.rom_path)):
+            with open(props.rom_path, mode="rb") as rom_file:
+                setup_data = binjo_setup.extract_setup(rom_file.read(), props.setup_map_id)
+            if (setup_data is not None):
+                for prop in binjo_setup.read_setup_objects(setup_data)["props"]:
+                    if (prop["kind"] == "sprite"):
+                        sprites.append({
+                            "assetId": prop["asset_id"],
+                            "assetName": binjo_names.ASSET_NAMES.get(prop["asset_id"]),
+                            "position": list(prop["position"]),
+                            "scale": prop["scale"],
+                            "mirrored": prop["mirrored"],
+                            "frame": prop["frame"],
+                        })
+
         data = {
             "binjoVersion": version_num,
             "mapId": context.scene.binjo_props.setup_map_id,
             "scaleFactor": context.scene.binjo_props.scale_factor,
             "actors": actors,
             "exits": exits,
+            "sprites": sprites,
         }
         with open(self.filepath, "w", encoding="utf-8") as out:
             json.dump(data, out, indent=2)
-        self.report({'INFO'}, f"Wrote {len(actors)} actors and {len(exits)} exits to {self.filepath}")
+        self.report({'INFO'}, f"Wrote {len(actors)} actors, {len(exits)} exits and {len(sprites)} sprites to {self.filepath}")
         return {'FINISHED'}
 
 
@@ -2401,6 +2422,9 @@ def get_material_data(mat, mesh_effects=()):
         "textureExtensionV": mat.get("Texture_Extension_T", tex_node.extension if tex_node is not None else None),
         "visible": not mat.get("Visibility_Disabled", "INVIS" in mat.name),
         "doubleSided": not mat.use_backface_culling,
+        # G_TEXTURE_GEN: S/T generated from the normal as seen from the camera
+        # (sphere mapping), the shine on honeycombs, jiggies and notes
+        "textureGen": mat.use_nodes and mat.node_tree.nodes.get("TEXGEN_COORD") is not None,
         "render": get_material_render_mode(mat),
         # also for blended materials: the opaque half of a map writes depth
         # even for those; only the translucent half doesn't
