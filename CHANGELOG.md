@@ -27,7 +27,11 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
   Die** and **(0x02B9) Rock Trapping Grunty**. The pieces Collywobble breaks
   into are named for what they are: **(0x04F2) Collywobble Large Leaf**,
   **(0x04F3) Collywobble Small Leaf** and **(0x04F4) Collywobble Floret** (a
-  piece of the head, not the stem, as the decomp's name had it).
+  piece of the head, not the stem, as the decomp's name had it). The
+  animations Banjo's house plays through its actors' path events (code_B9770.c,
+  in map 0x8C's setup) are **(0x01CE) Banjos Curtains Sway**, **(0x0208)
+  Fishbowl Swim**, **(0x0209) Cuckoo Clock Idle** (held for 4 seconds) and
+  **(0x020A) Cuckoo Clock Cuckoo** (2 seconds, then back to idle).
 - **Smooth Normals** (on by default, with a **Smooth Angle** of 60 degrees)
   gives the faces drawn without G_LIGHTING smooth normals by angle. Those
   faces have no normal in the BIN, so they came in flat; the game never
