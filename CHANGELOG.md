@@ -31,7 +31,18 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
   animations Banjo's house plays through its actors' path events (code_B9770.c,
   in map 0x8C's setup) are **(0x01CE) Banjos Curtains Sway**, **(0x0208)
   Fishbowl Swim**, **(0x0209) Cuckoo Clock Idle** (held for 4 seconds) and
-  **(0x020A) Cuckoo Clock Cuckoo** (2 seconds, then back to idle).
+  **(0x020A) Cuckoo Clock Cuckoo** (2 seconds, then back to idle). The
+  models map 0x8C's setup places as props, which the decomp leaves unnamed
+  but the stove, are named for what they are: **(0x0330) Banjos Armchair**,
+  **(0x0331) Banjos Towel Rail**, **(0x0333) Banjos Flower Vase**,
+  **(0x0336) Banjos Side Table** (the table, with a taller invisible box for
+  collision), **(0x0343) Tootys Picture**, **(0x0349) Cuckoo Clock
+  Collision** (invisible, round the clock) and **(0x034B) Banjos Bed**.
+  The models other setups place as props, from the decomp's notes on the
+  asset enum: **(0x02DA) TTC Palm Tree**, **(0x02DF) TTC Light Crate**,
+  **(0x02E0) TTC Dark Crate**, **(0x02E1) TTC Light And Dark Crate**,
+  **(0x02ED) Banjos House Dustbin** and **(0x02FF) MM Tree** (Spiral
+  Mountain's trees too).
 - **Smooth Normals** (on by default, with a **Smooth Angle** of 60 degrees)
   gives the faces drawn without G_LIGHTING smooth normals by angle. Those
   faces have no normal in the BIN, so they came in flat; the game never
