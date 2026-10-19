@@ -504,6 +504,15 @@ class ModelBIN_DLSeg:
         self.command_cnt = len(self.command_list)
         self.valid = True
 
+    def get_tri_cnt(self):
+        tri_cnt = 0
+        for cmd in self.command_list:
+            if (cmd.command_name == "G_TRI1"):
+                tri_cnt += 1
+            elif (cmd.command_name == "G_TRI2"):
+                tri_cnt += 2
+        return tri_cnt
+
     def get_bytes(self):
         output = bytearray()
         output += binjo_utils.int_to_bytes(self.command_cnt, 4)
@@ -522,17 +531,20 @@ class ModelBIN_DLSeg:
         DL_command_chunk.append(DisplayList_Command(full=
             DisplayList_Command.G_VTX(0, (3 * len(tri_list)), smallest_index)
         ))
-        for tri in tri_list:
-            # its guaranteed that I have an even number of tris at this point
+        # two tris per G_TRI2, and a G_TRI1 for an odd one out. Passing the same
+        # tri as both halves of a G_TRI2 drew every tri twice, which a
+        # translucent material blends twice
+        local_ids = [
+            ((tri.index_1 - smallest_index), (tri.index_2 - smallest_index), (tri.index_3 - smallest_index))
+            for tri in tri_list
+        ]
+        for idx in range(0, len(local_ids) - 1, 2):
             DL_command_chunk.append(DisplayList_Command(full=
-                DisplayList_Command.G_TRI2(
-                    (tri.index_1 - smallest_index),
-                    (tri.index_2 - smallest_index),
-                    (tri.index_3 - smallest_index),
-                    (tri.index_1 - smallest_index),
-                    (tri.index_2 - smallest_index),
-                    (tri.index_3 - smallest_index)
-                )
+                DisplayList_Command.G_TRI2(*local_ids[idx], *local_ids[idx + 1])
+            ))
+        if (len(local_ids) % 2 == 1):
+            DL_command_chunk.append(DisplayList_Command(full=
+                DisplayList_Command.G_TRI1(*local_ids[-1])
             ))
         return DL_command_chunk
 

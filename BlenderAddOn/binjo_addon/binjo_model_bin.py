@@ -108,7 +108,10 @@ class ModelBIN:
         write_segment(self.ColSeg, "coll_offset")
 
         write_segment(self.DLSeg, "DL_offset")
-        # self.Header.tri_cnt = self.DLSeg.DL_tri_cnt # might be neccessary at some point
+        # the header's tri count is what the DL draws (G_TRI1 + 2 * G_TRI2);
+        # every one of the ROM's 823 models agrees
+        if (self.DLSeg.valid):
+            self.Header.tri_cnt = self.DLSeg.get_tri_cnt()
 
         # FX
         # FX_END

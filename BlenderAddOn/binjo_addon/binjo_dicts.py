@@ -406,7 +406,7 @@ class Dicts:
         #                                     ^ 2nd child: offset 0x30 bytes to next geolayout command
         "DRAW_DISTANCE":    0x0D,
         "UNKNOWN_0E":       0x0E,
-        "UNKNOWN_0F":       0x0F,
+        "CAMERA":           0x0F, # draws its child only while the camera is (or is not) in the listed areas
     }
     GEO_CMD_NAMES_REV = {
         0x01: "SORT",
@@ -423,5 +423,5 @@ class Dicts:
         0x0C: "SELECTOR",
         0x0D: "DRAW_DISTANCE",
         0x0E: "UNKNOWN_0E",
-        0x0F: "UNKNOWN_0F",
+        0x0F: "CAMERA",
     }

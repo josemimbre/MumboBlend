@@ -120,6 +120,15 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ### Fixed
 
+- The GeoLayout walk goes into the children of DRAW_DISTANCE, 0x0E and CAMERA
+  commands, which hold most of a map's geometry. Their LODs and SELECTORs were
+  never seen, so every LOD level and every variant came in stacked on top of
+  each other: Mad Monster Mansion, Mumbo's Mountain, Bubblegloop Swamp and
+  Rusty Bucket Bay among 28 models, and Mumbo's Skull's 175 variant pieces.
+- Exported BINs draw each triangle once. Every triangle was sent as both
+  halves of a G_TRI2, so it was drawn twice, and twice blended when
+  translucent; pairs now share a G_TRI2 and an odd one gets a G_TRI1.
+- Exported BINs fill in the header's triangle count (0x30), which was always 0.
 - SELECTOR variants that are also part of the model's collision are split off
   like any other. The collision triangles are listed first, with no variant,
   and the drawn ones were matched to them and kept that, so the variants went

@@ -286,8 +286,25 @@ class ModelBIN_GeoSeg:
                             child_key = f"sel{selector_id}_{idx}"
                         self._walk(file_data, offset + child_offset, bone_stack, is_excluded, child_key)
 
+            # DRAW_DISTANCE (frustum box), 0x0E (sphere) and CAMERA (camera
+            # area) only gate their child chain at run time, so like the other
+            # non-bone branches they are walked unconditionally. Each keeps the
+            # child's s16 offset in a different place (geo_cmd_draw_distance_s,
+            # geo_cmd_E_s, geo_cmd_camera_s in the decomp's core2/model.h).
+            # Their children hold most of the ROM's LOAD_DLs, and some of its
+            # LODs and SELECTORs, so skipping them lost those tags.
+            elif (cmd_0 in (Dicts.GEO_CMD_NAMES["DRAW_DISTANCE"], Dicts.GEO_CMD_NAMES["UNKNOWN_0E"], Dicts.GEO_CMD_NAMES["CAMERA"])):
+                branch_field = {
+                    Dicts.GEO_CMD_NAMES["DRAW_DISTANCE"]: 0x14,
+                    Dicts.GEO_CMD_NAMES["UNKNOWN_0E"]:    0x10,
+                    Dicts.GEO_CMD_NAMES["CAMERA"]:        0x08,
+                }[cmd_0]
+                sub_offset = binjo_utils.read_bytes(file_data, offset + branch_field, 2, type="signed")
+                if (sub_offset != 0):
+                    self._walk(file_data, offset + sub_offset, bone_stack, is_excluded, variant_key)
+
             # every other command (unknown/opaque or purely cosmetic, e.g.
-            # DRAW_DISTANCE, REFERENCE_POINT) has no sub-chain to recurse into
+            # REFERENCE_POINT) has no sub-chain to recurse into
 
             if (size_4 == 0):
                 return
