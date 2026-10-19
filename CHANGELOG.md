@@ -10,6 +10,8 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-19
+
 ### Added
 
 - **Export Map Objects** also writes the sprite props the map's setup file
