@@ -10,6 +10,21 @@ same version into `blender_manifest.toml` and `binjo_addon/__init__.py`.
 
 ## [Unreleased]
 
+### Changed
+
+- The player's animations are named for the move, not the decomp's
+  squashed state names, so they can be found in the list: Banjo's start
+  with **Banjo** (`Bsbflap` is **(0x0017) Banjo Flap**, `Bsbtror Jump`
+  **(0x0027) Banjo Trot Jump**, `Bswalk Run` **(0x000C) Banjo Run**, `Bsbbarge`
+  **(0x001C) Banjo Beak Barge**, `Bstwirl` **(0x004F) Banjo Roll**, which the
+  forward roll's state plays, `Bspunch` **(0x0005) Banjo Claw Swipe**,
+  `Bsbpeck` **(0x001A) Banjo Rat-a-tat Rap**, and the second `Bssplat`
+  **(0x00D2) Banjo Splat Get Up**, which bs/splat.c plays after the fall
+  itself, 0x0149 **Banjo Splat**), and the
+  transformations' with **Termite**, **Croc**, **Walrus** or **Pumpkin**.
+  102 in all. An FBX exported before keeps its old take name: a clip set up
+  in Unity from it needs pointing at the new take when it is exported again.
+
 ## [0.4.0] - 2026-10-19
 
 ### Added

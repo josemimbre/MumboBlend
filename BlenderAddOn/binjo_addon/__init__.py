@@ -1606,7 +1606,7 @@ def _local_bone_matrix(rest_head, components, frame, scaling_factor, model_scale
     #   R_blender = Ry(-roll) @ Rz(yaw) @ Rx(pitch)
     #
     # This order was previously reversed. That passed its check because it was
-    # validated against a reference frame of "Bsstand Idle", whose angles are
+    # validated against a reference frame of "Banjo Idle" (0x6F), whose angles are
     # small - and Euler composition is nearly commutative for small angles, so
     # both orders render almost identically there. Large-angle animations (a
     # walk cycle's limb swings) are what actually separate them.
